@@ -1,0 +1,20 @@
+[package]
+name = "swarm-telemetry"
+description = "Observability hooks: structured logging, metrics counters, and tracing setup"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+swarm-core = { workspace = true }
+swarm-config = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]

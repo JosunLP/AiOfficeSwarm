@@ -1,0 +1,31 @@
+# AiOfficeSwarm — Example Configuration
+# Copy to swarm.toml and customize for your deployment.
+# Run: swarm --config swarm.toml config
+
+instance_name = "my-ai-swarm"
+
+[orchestrator]
+# Broadcast channel capacity for internal events.
+event_channel_capacity = 1024
+# Maximum tasks to dispatch per scheduling tick.
+max_dispatch_per_tick = 16
+# Default task timeout in seconds (0 = no timeout).
+default_task_timeout_secs = 300
+# Maximum concurrent tasks across all agents.
+max_concurrent_tasks = 256
+
+[telemetry]
+# Log level: trace, debug, info, warn, error
+log_level = "info"
+# Log format: text (human-readable) or json (structured, for log aggregators)
+log_format = "text"
+# Enable OpenTelemetry Protocol (OTLP) trace export (requires collector)
+otlp_enabled = false
+# OTLP collector endpoint (only used when otlp_enabled = true)
+# otlp_endpoint = "http://localhost:4317"
+
+[plugins]
+# Directory to scan for plugin definitions (optional)
+# plugin_dir = "/etc/swarm/plugins"
+# Automatically load all plugins found in plugin_dir on startup
+auto_load = false
