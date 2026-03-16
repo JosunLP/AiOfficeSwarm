@@ -5,7 +5,7 @@
 //! This crate provides:
 //!
 //! - [`AgentRegistry`]: Tracks all registered agents and their runtime state.
-//! - [`TaskQueue`]: A priority-ordered queue of pending and in-flight tasks.
+//! - [`TaskQueue`]: A priority-ordered queue of pending tasks awaiting scheduling.
 //! - [`Scheduler`]: Matches tasks to available agents based on capabilities.
 //! - [`Orchestrator`]: The top-level control loop that ties everything together.
 //! - [`SupervisionManager`]: Maintains the agent supervision tree and handles

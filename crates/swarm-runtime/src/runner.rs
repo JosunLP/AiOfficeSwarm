@@ -54,9 +54,7 @@ impl TaskRunner {
         let agent_id = self.agent_id();
 
         // Check circuit breaker before attempting execution.
-        self.circuit_breaker.acquire().map_err(|_| SwarmError::Internal {
-            reason: format!("circuit breaker is open for agent {}", agent_id),
-        })?;
+        self.circuit_breaker.acquire()?;
 
         // Tell the orchestrator execution is starting.
         self.handle.record_task_started(task_id, agent_id)?;
@@ -213,5 +211,34 @@ mod tests {
 
         let timed_out_task = handle.get_task(&task_id).unwrap();
         assert_eq!(timed_out_task.status.label(), "timed_out");
+    }
+
+    #[tokio::test]
+    async fn run_task_preserves_circuit_breaker_error_details() {
+        let orch = Orchestrator::new();
+        let handle = orch.handle();
+
+        let desc = AgentDescriptor::new("ok-worker", AgentKind::Worker, CapabilitySet::new());
+        let agent = OkAgent { descriptor: desc.clone() };
+        let agent_id = desc.id;
+
+        handle.register_agent(desc).unwrap();
+        handle.set_agent_ready(agent_id).unwrap();
+
+        let task_id = handle.submit_task(TaskSpec::new("t", serde_json::json!({"x": 1}))).unwrap();
+        handle.try_schedule_next().unwrap();
+
+        let task = handle.get_task(&task_id).unwrap();
+        let mut runner = TaskRunner::new(Box::new(agent), handle);
+
+        for _ in 0..5 {
+            runner.circuit_breaker.record_failure();
+        }
+
+        assert!(matches!(
+            runner.run_task(task).await,
+            Err(SwarmError::Internal { reason })
+                if reason.contains("circuit 'ok-worker' is open")
+        ));
     }
 }

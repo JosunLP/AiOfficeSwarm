@@ -95,14 +95,13 @@ impl CircuitBreaker {
         self.inner.lock().unwrap().state.clone()
     }
 
-    /// Returns `true` if calls are currently allowed.
+    /// Returns `true` only when the circuit is fully closed.
+    ///
+    /// This does not report whether a single half-open probe may be attempted;
+    /// use [`CircuitBreaker::acquire`] for actual call admission.
     pub fn is_closed(&self) -> bool {
         let inner = self.inner.lock().unwrap();
-        match &inner.state {
-            CircuitState::Closed => true,
-            CircuitState::HalfOpen { probe_in_flight } => !probe_in_flight,
-            CircuitState::Open { retry_after, .. } => Utc::now() >= *retry_after,
-        }
+        matches!(&inner.state, CircuitState::Closed)
     }
 
     /// Attempt to acquire a permit for a call.
@@ -213,6 +212,28 @@ mod tests {
         cb.record_success(); // reset
         cb.record_failure(); // 1st failure again
         assert!(cb.acquire().is_ok());
+    }
+
+    #[test]
+    fn is_closed_only_for_closed_state() {
+        let cb = CircuitBreaker::with_config(
+            "test",
+            CircuitBreakerConfig {
+                failure_threshold: 1,
+                open_duration_secs: 0,
+            },
+        );
+
+        assert!(cb.is_closed());
+
+        cb.record_failure();
+        assert!(!cb.is_closed());
+
+        assert!(cb.acquire().is_ok());
+        assert!(!cb.is_closed());
+
+        cb.record_success();
+        assert!(cb.is_closed());
     }
 
     #[test]

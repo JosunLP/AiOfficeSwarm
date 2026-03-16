@@ -2,7 +2,7 @@
 //!
 //! A WASM plugin is distributed as a pair of files:
 //! - `<name>.wasm` — the precompiled WebAssembly binary
-//! - `<name>.toml` — the manifest file described by this module
+//! - `plugin.toml` — the manifest file described by this module
 //!
 //! The manifest is written in TOML and declares the plugin's identity,
 //! capabilities, actions, permissions, and the relative path to the `.wasm`

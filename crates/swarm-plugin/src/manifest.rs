@@ -2,8 +2,8 @@
 //! declared capabilities.
 //!
 //! The manifest is the first thing the host reads when loading a plugin.
-//! It is used for version compatibility checks, permission validation,
-//! and capability discovery.
+//! It is used for version compatibility checks, capability discovery,
+//! and permission metadata inspection.
 //!
 //! ## Manifest types
 //! - [`PluginManifest`] – in-memory manifest used by the host at runtime.
@@ -114,8 +114,9 @@ pub struct PluginManifest {
     pub actions: Vec<PluginAction>,
     /// Framework permissions required by this plugin.
     ///
-    /// Format: `"verb:resource"` (e.g., `"create:task"`). The host checks
-    /// these against RBAC before loading the plugin.
+    /// Format: `"verb:resource"` (e.g., `"create:task"`). These declarations
+    /// describe the framework permissions a plugin expects; enforcement is
+    /// performed by the embedding application or a higher-level host wrapper.
     pub required_permissions: Vec<String>,
     /// OS-level sandbox permissions required by this WASM plugin.
     ///
