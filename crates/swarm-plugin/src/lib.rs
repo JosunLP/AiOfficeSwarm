@@ -17,10 +17,23 @@
 //! - **PolicyProvider**: contributes new policy rules.
 //! - **TriggerProvider**: reacts to external events and submits tasks.
 //!
+//! ## WASM plugins (`wasm` feature, enabled by default)
+//!
+//! When the `wasm` feature is active (the default), two additional modules are
+//! available:
+//!
+//! - [`wasm_manifest`] – types for the on-disk TOML manifest format and the
+//!   [`wasm_manifest::WasmManifestFile`] loader.
+//! - [`wasm_loader`] – [`wasm_loader::WasmPlugin`] (implements [`Plugin`] via
+//!   the *wasmtime* runtime) and [`wasm_loader::WasmPluginLoader`] (high-level
+//!   file-based loader).
+//!
 //! ## Security
 //! All plugin invocations pass through the policy engine. Plugins declare
 //! their required permissions in the manifest; the host validates these
-//! against the RBAC configuration before loading the plugin.
+//! against the RBAC configuration before loading the plugin. WASM plugins
+//! additionally declare OS-level sandbox permissions via
+//! [`manifest::WasmPermission`].
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::all)]
@@ -30,9 +43,15 @@ pub mod lifecycle;
 pub mod manifest;
 pub mod registry;
 
+#[cfg(feature = "wasm")]
+pub mod wasm_manifest;
+
+#[cfg(feature = "wasm")]
+pub mod wasm_loader;
+
 pub use host::PluginHost;
 pub use lifecycle::{PluginLifecycleEvent, PluginState};
-pub use manifest::{PluginCapabilityKind, PluginManifest};
+pub use manifest::{PluginCapabilityKind, PluginManifest, WasmPermission};
 pub use registry::PluginRegistry;
 
 use async_trait::async_trait;

@@ -128,7 +128,90 @@ impl Agent for MyAgent {
 
 ---
 
-## Writing a Custom Plugin
+## Writing a WASM Plugin
+
+WASM plugins are precompiled `.wasm` binaries paired with a TOML manifest.
+They can be written in **any language that compiles to WebAssembly**.
+
+### 1. Create the manifest (`plugin.toml`)
+
+```toml
+[plugin]
+name             = "My WASM Plugin"
+version          = "1.0.0"
+author           = "Acme Corp"
+description      = "A plugin compiled to WebAssembly"
+min_host_version = "0.1.0"
+wasm_file        = "my-plugin.wasm"
+capabilities     = ["ActionProvider"]
+
+# Framework RBAC permissions
+required_permissions = []
+
+# OS-level sandbox permissions
+[[plugin.wasm_permissions]]
+kind  = "EnvVar"
+value = "MY_API_KEY"
+
+[[plugin.wasm_permissions]]
+kind  = "Network"
+value = "api.example.com:443"
+
+[[plugin.actions]]
+name        = "my_action"
+description = "Does something useful"
+```
+
+### 2. Implement the WASM ABI (Rust example)
+
+```rust
+// Compile with: cargo build --target wasm32-unknown-unknown --release
+
+#[no_mangle]
+pub extern "C" fn swarm_on_load()      -> i32 { 0 }
+#[no_mangle]
+pub extern "C" fn swarm_on_unload()    -> i32 { 0 }
+#[no_mangle]
+pub extern "C" fn swarm_health_check() -> i32 { 0 }
+
+#[no_mangle]
+pub unsafe extern "C" fn swarm_alloc(size: usize) -> *mut u8 {
+    /* allocate with your preferred allocator */
+}
+#[no_mangle]
+pub unsafe extern "C" fn swarm_dealloc(ptr: *mut u8, len: usize) { /* free */ }
+
+#[no_mangle]
+pub unsafe extern "C" fn swarm_invoke(
+    _action_ptr: *const u8, _action_len: usize,
+    params_ptr: *const u8, params_len: usize,
+    result_ptr: *mut u8, result_cap: usize,
+) -> i32 {
+    // return n >= 0 on success (n bytes of JSON at result_ptr)
+    // return n < 0 on error  ((-n) bytes of error message at result_ptr)
+    let input = std::slice::from_raw_parts(params_ptr, params_len);
+    let out   = std::slice::from_raw_parts_mut(result_ptr, result_cap);
+    let n = input.len().min(result_cap);
+    out[..n].copy_from_slice(&input[..n]);
+    n as i32
+}
+```
+
+### 3. Load it from the host
+
+```rust
+use std::path::Path;
+use swarm_plugin::{PluginHost, wasm_loader::WasmPluginLoader};
+
+let plugin = WasmPluginLoader::from_manifest_file(
+    Path::new("plugins/my-plugin/plugin.toml"),
+)?;
+let host = PluginHost::new();
+let id = host.load(Box::new(plugin)).await?;
+let result = host.invoke(&id, "my_action", serde_json::json!({})).await?;
+```
+
+See `plugins/wasm-example/` for the complete example.
 
 ```rust
 use async_trait::async_trait;

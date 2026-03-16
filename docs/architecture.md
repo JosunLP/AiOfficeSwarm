@@ -128,6 +128,92 @@ access orchestrator state — they must go through the public API.
 
 ---
 
+## WASM Plugins (precompiled `.wasm` files)
+
+Plugins can also be distributed as precompiled WebAssembly binaries (`wasm`
+feature, enabled by default).
+
+### Distribution format
+
+A WASM plugin is a pair of files:
+```
+plugins/my-plugin/
+├── plugin.toml      # manifest (metadata + permissions)
+└── my-plugin.wasm   # precompiled WebAssembly binary
+```
+
+### Manifest format (`plugin.toml`)
+
+```toml
+[plugin]
+name             = "My WASM Plugin"
+version          = "1.0.0"
+author           = "Acme Corp"
+description      = "A useful plugin compiled to WebAssembly"
+min_host_version = "0.1.0"
+wasm_file        = "my-plugin.wasm"
+capabilities     = ["ActionProvider"]
+required_permissions = ["read:config"]
+
+[[plugin.wasm_permissions]]
+kind  = "Network"
+value = "api.example.com:443"
+
+[[plugin.wasm_permissions]]
+kind  = "EnvVar"
+value = "MY_API_KEY"
+
+[[plugin.actions]]
+name        = "do_something"
+description = "Performs a useful operation"
+```
+
+### WASM sandbox permissions (`WasmPermission`)
+
+| Kind | Example value | Description |
+|------|---------------|-------------|
+| `Network` | `"api.example.com:443"` | Outbound network access |
+| `EnvVar` | `"MY_API_KEY"` | Read an environment variable |
+| `FileRead` | `"/etc/ssl/certs"` | Read from a filesystem path |
+| `FileWrite` | `"/tmp/plugin-cache"` | Write to a filesystem path |
+| `Custom` | `"my-special-permission"` | Arbitrary named capability |
+
+### WASM ABI
+
+The compiled `.wasm` module must export:
+
+| Export | Signature | Semantics |
+|--------|-----------|-----------|
+| `memory` | memory | Linear memory (default export) |
+| `swarm_alloc` | `(i32) → i32` | Allocate bytes; returns pointer |
+| `swarm_dealloc` | `(i32, i32)` | Free bytes at pointer |
+| `swarm_on_load` | `() → i32` | `0` = success |
+| `swarm_on_unload` | `() → i32` | `0` = success |
+| `swarm_health_check` | `() → i32` | `0` = healthy |
+| `swarm_invoke` | `(i32, i32, i32, i32, i32, i32) → i32` | See below |
+
+`swarm_invoke(action_ptr, action_len, params_ptr, params_len, result_ptr, result_cap)`:
+- Returns `n ≥ 0`: success — `n` bytes of JSON at `result_ptr`.
+- Returns `n < 0`: error — `(-n)` bytes of error message at `result_ptr`.
+
+### Loading a WASM plugin
+
+```rust
+use std::path::Path;
+use swarm_plugin::{PluginHost, wasm_loader::WasmPluginLoader};
+
+let plugin = WasmPluginLoader::from_manifest_file(
+    Path::new("plugins/my-plugin/plugin.toml"),
+)?;
+let host = PluginHost::new();
+let id = host.load(Box::new(plugin)).await?;
+```
+
+See `plugins/wasm-example/` for a complete worked example of a WASM plugin
+written in Rust (targeting `wasm32-unknown-unknown`).
+
+---
+
 ## Fault Tolerance
 
 ### Circuit Breaker

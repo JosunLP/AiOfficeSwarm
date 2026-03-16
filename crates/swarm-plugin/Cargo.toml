@@ -8,16 +8,33 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+## Enable WASM plugin support via the wasmtime runtime.
+##
+## When this feature is active the following modules are available:
+## - `swarm_plugin::wasm_manifest` – TOML manifest file loader
+## - `swarm_plugin::wasm_loader`   – `WasmPlugin` + `WasmPluginLoader`
+##
+## Enabled by default so that `cargo test --workspace` covers WASM paths.
+default = ["wasm"]
+wasm = ["dep:wasmtime"]
+
 [dependencies]
 swarm-core = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 dashmap = { workspace = true }
 chrono = { workspace = true }
 
+# Optional WASM runtime – brought in when the `wasm` feature is active.
+wasmtime = { version = "20", optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true }
+# Used in WASM loader integration tests to compile WAT → WASM bytes at test time.
+wat = "1.245"

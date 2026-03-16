@@ -4,6 +4,14 @@
 //! The manifest is the first thing the host reads when loading a plugin.
 //! It is used for version compatibility checks, permission validation,
 //! and capability discovery.
+//!
+//! ## Manifest types
+//! - [`PluginManifest`] – in-memory manifest used by the host at runtime.
+//! - [`WasmPermission`] – OS-level sandbox permission declared by a WASM plugin.
+//!
+//! WASM plugins also supply a _file-based_ manifest (TOML) that is parsed by
+//! [`crate::wasm_manifest::WasmManifestFile`] and converted into a
+//! [`PluginManifest`] before being handed to the [`crate::PluginHost`].
 
 use serde::{Deserialize, Serialize};
 use swarm_core::identity::PluginId;
@@ -38,6 +46,51 @@ pub struct PluginAction {
     pub output_schema: Option<serde_json::Value>,
 }
 
+/// An OS-level sandbox permission that a WASM plugin is allowed to use.
+///
+/// When loading a WASM plugin the host validates these permissions against
+/// its sandbox policy before instantiating the WASM module. Permissions that
+/// are not granted will cause the plugin to fail to load.
+///
+/// These are _separate_ from the framework-level RBAC permissions stored in
+/// [`PluginManifest::required_permissions`], which control what actions the
+/// plugin may perform inside the swarm.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value")]
+pub enum WasmPermission {
+    /// Outbound network access to a host/CIDR (e.g. `"api.example.com:443"`).
+    Network(String),
+    /// Read access to an environment variable (e.g. `"MY_API_KEY"`).
+    EnvVar(String),
+    /// Read access to a filesystem path (e.g. `"/etc/ssl/certs"`).
+    FileRead(String),
+    /// Write access to a filesystem path (e.g. `"/tmp/plugin-cache"`).
+    FileWrite(String),
+    /// An arbitrary named permission for custom sandbox enforcement.
+    Custom(String),
+}
+
+impl WasmPermission {
+    /// Returns a compact string representation suitable for logging or audit.
+    ///
+    /// ```text
+    /// network:api.example.com:443
+    /// env_var:MY_API_KEY
+    /// file_read:/etc/ssl/certs
+    /// file_write:/tmp/cache
+    /// custom:my-permission
+    /// ```
+    pub fn as_str(&self) -> String {
+        match self {
+            WasmPermission::Network(v) => format!("network:{v}"),
+            WasmPermission::EnvVar(v) => format!("env_var:{v}"),
+            WasmPermission::FileRead(v) => format!("file_read:{v}"),
+            WasmPermission::FileWrite(v) => format!("file_write:{v}"),
+            WasmPermission::Custom(v) => format!("custom:{v}"),
+        }
+    }
+}
+
 /// The static manifest that every plugin must provide.
 ///
 /// The host validates the manifest before calling [`Plugin::on_load`].
@@ -64,6 +117,12 @@ pub struct PluginManifest {
     /// Format: `"verb:resource"` (e.g., `"create:task"`). The host checks
     /// these against RBAC before loading the plugin.
     pub required_permissions: Vec<String>,
+    /// OS-level sandbox permissions required by this WASM plugin.
+    ///
+    /// Empty for native (non-WASM) plugins. For WASM plugins these declare
+    /// what system resources the sandboxed module may access.
+    #[serde(default)]
+    pub wasm_permissions: Vec<WasmPermission>,
 }
 
 impl PluginManifest {
@@ -84,6 +143,7 @@ impl PluginManifest {
             capabilities: Vec::new(),
             actions: Vec::new(),
             required_permissions: Vec::new(),
+            wasm_permissions: Vec::new(),
         }
     }
 }
@@ -97,5 +157,31 @@ mod tests {
         let a = PluginManifest::new("plugin-a", "1.0.0", "author", "desc");
         let b = PluginManifest::new("plugin-b", "1.0.0", "author", "desc");
         assert_ne!(a.id, b.id);
+    }
+
+    #[test]
+    fn wasm_permission_as_str() {
+        assert_eq!(WasmPermission::Network("api.test.com:443".into()).as_str(), "network:api.test.com:443");
+        assert_eq!(WasmPermission::EnvVar("MY_KEY".into()).as_str(), "env_var:MY_KEY");
+        assert_eq!(WasmPermission::FileRead("/etc/ssl".into()).as_str(), "file_read:/etc/ssl");
+        assert_eq!(WasmPermission::FileWrite("/tmp".into()).as_str(), "file_write:/tmp");
+        assert_eq!(WasmPermission::Custom("special".into()).as_str(), "custom:special");
+    }
+
+    #[test]
+    fn wasm_permission_roundtrip_json() {
+        let perms = vec![
+            WasmPermission::Network("api.example.com:443".into()),
+            WasmPermission::EnvVar("API_KEY".into()),
+        ];
+        let json = serde_json::to_string(&perms).unwrap();
+        let decoded: Vec<WasmPermission> = serde_json::from_str(&json).unwrap();
+        assert_eq!(perms, decoded);
+    }
+
+    #[test]
+    fn manifest_wasm_permissions_default_empty() {
+        let m = PluginManifest::new("test", "1.0.0", "author", "desc");
+        assert!(m.wasm_permissions.is_empty());
     }
 }

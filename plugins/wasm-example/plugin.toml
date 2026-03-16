@@ -1,0 +1,46 @@
+# AiOfficeSwarm WASM Plugin — Example Manifest
+#
+# Place this file alongside the compiled `echo-plugin.wasm` binary.
+# Load with:
+#   WasmPluginLoader::from_manifest_file(Path::new("plugins/wasm-example/plugin.toml"))
+
+[plugin]
+# Human-readable name used in logs and the CLI.
+name             = "Echo WASM Plugin"
+
+# Semantic version of this plugin.
+version          = "1.0.0"
+
+# Author or vendor identifier.
+author           = "AiOfficeSwarm Contributors"
+
+# Short description shown in `swarm plugin list`.
+description      = "A minimal echo plugin compiled to WebAssembly. Returns its input unchanged."
+
+# Minimum host framework version required (SemVer).
+min_host_version = "0.1.0"
+
+# Path to the precompiled WASM binary, relative to this manifest file.
+wasm_file = "echo-plugin.wasm"
+
+# Capabilities this plugin provides.
+capabilities = ["ActionProvider"]
+
+# Framework-level RBAC permissions (verb:resource pairs).
+# This plugin only needs to receive task inputs — no write access required.
+required_permissions = []
+
+# ── WASM sandbox permissions ────────────────────────────────────────────────
+# Declare all OS-level resources the WASM module is allowed to access.
+# The host enforces these before instantiating the module.
+# This plugin needs no special OS access.
+
+# ── Actions ─────────────────────────────────────────────────────────────────
+
+[[plugin.actions]]
+name        = "echo"
+description = "Returns the input JSON unchanged."
+
+[[plugin.actions]]
+name        = "ping"
+description = "Returns {\"pong\": true}."
