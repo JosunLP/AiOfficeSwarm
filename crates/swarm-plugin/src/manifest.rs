@@ -96,7 +96,7 @@ impl WasmPermission {
 /// The host validates the manifest before calling [`Plugin::on_load`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
-    /// Stable, unique plugin identifier (e.g., `"com.example.github-integration"`).
+    /// Stable, unique plugin identifier backed by a UUID.
     pub id: PluginId,
     /// Human-readable plugin name.
     pub name: String,

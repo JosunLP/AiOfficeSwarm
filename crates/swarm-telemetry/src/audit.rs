@@ -58,9 +58,9 @@ impl AuditLogger {
     /// Record an audit entry.
     pub fn record(&self, entry: AuditEntry) {
         tracing::info!(
-            action = entry.action,
-            subject = entry.subject,
-            resource = entry.resource,
+            action = %entry.action,
+            subject = %entry.subject,
+            resource = %entry.resource,
             outcome = ?entry.outcome,
             "[AUDIT]"
         );

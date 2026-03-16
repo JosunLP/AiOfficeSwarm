@@ -48,13 +48,13 @@ impl PluginHost {
         self.registry.register(manifest)?;
         self.registry.update_state(&id, PluginState::Loading)?;
 
-        tracing::info!(plugin_id = %id, name = name, "Loading plugin");
+        tracing::info!(plugin_id = %id, name = %name, "Loading plugin");
 
         match plugin.on_load().await {
             Ok(()) => {
                 self.registry.update_state(&id, PluginState::Active)?;
                 self.instances.insert(id, Arc::new(Mutex::new(plugin)));
-                tracing::info!(plugin_id = %id, name = name, "Plugin loaded and active");
+                tracing::info!(plugin_id = %id, name = %name, "Plugin loaded and active");
                 Ok(id)
             }
             Err(e) => {
@@ -66,7 +66,7 @@ impl PluginHost {
                         failed_at: Utc::now(),
                     },
                 )?;
-                tracing::error!(plugin_id = %id, name = name, reason = reason, "Plugin failed to load");
+                tracing::error!(plugin_id = %id, name = %name, reason = %reason, "Plugin failed to load");
                 Err(SwarmError::PluginInitFailed { name, reason })
             }
         }
@@ -114,13 +114,13 @@ impl PluginHost {
         match plugin.on_unload().await {
             Ok(()) => {
                 self.registry.update_state(plugin_id, PluginState::Unloaded)?;
-                tracing::info!(plugin_id = %plugin_id, name = name, "Plugin unloaded");
+                tracing::info!(plugin_id = %plugin_id, name = %name, "Plugin unloaded");
                 Ok(())
             }
             Err(e) => {
                 tracing::warn!(
                     plugin_id = %plugin_id,
-                    name = name,
+                    name = %name,
                     error = e.to_string(),
                     "Plugin unload produced an error (continuing)"
                 );

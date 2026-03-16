@@ -29,7 +29,7 @@ impl RbacEngine {
 
     /// Register a role definition.
     pub fn define_role(&self, role: Role) {
-        tracing::debug!(role = role.name, "Role defined");
+        tracing::debug!(role = %role.name, "Role defined");
         self.roles.insert(role.name.clone(), role);
     }
 
@@ -44,7 +44,7 @@ impl RbacEngine {
             .entry(key)
             .or_insert_with(HashSet::new)
             .insert(role.clone());
-        tracing::debug!(subject = subject.as_str(), role = role, "Role assigned to subject");
+        tracing::debug!(subject = subject.as_str(), role = %role, "Role assigned to subject");
     }
 
     /// Revoke a role from a subject.

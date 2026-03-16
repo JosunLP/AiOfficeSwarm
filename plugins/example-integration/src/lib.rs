@@ -97,8 +97,8 @@ impl Plugin for NotificationPlugin {
     async fn on_load(&mut self) -> SwarmResult<()> {
         // In a real implementation: establish a connection.
         tracing::info!(
-            plugin = self.manifest.name,
-            channel = self.channel,
+            plugin = %self.manifest.name,
+            channel = %self.channel,
             "NotificationPlugin loaded; simulating connection to channel"
         );
         self.connected = true;
@@ -106,7 +106,7 @@ impl Plugin for NotificationPlugin {
     }
 
     async fn on_unload(&mut self) -> SwarmResult<()> {
-        tracing::info!(plugin = self.manifest.name, "NotificationPlugin unloading");
+        tracing::info!(plugin = %self.manifest.name, "NotificationPlugin unloading");
         self.connected = false;
         Ok(())
     }
@@ -134,8 +134,8 @@ impl Plugin for NotificationPlugin {
                 let severity = params["severity"].as_str().unwrap_or("info");
 
                 tracing::info!(
-                    plugin = self.manifest.name,
-                    channel = self.channel,
+                    plugin = %self.manifest.name,
+                    channel = %self.channel,
                     severity = severity,
                     message = message,
                     "Sending notification (mock)"
@@ -143,14 +143,14 @@ impl Plugin for NotificationPlugin {
 
                 Ok(json!({
                     "delivered": true,
-                    "channel": self.channel,
+                    "channel": &self.channel,
                     "severity": severity,
                     "message": message,
                 }))
             }
             "get_status" => Ok(json!({
                 "connected": self.connected,
-                "channel": self.channel,
+                "channel": &self.channel,
             })),
             other => Err(SwarmError::PluginOperationFailed {
                 name: self.manifest.name.clone(),

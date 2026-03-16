@@ -4,7 +4,7 @@
 //! and what their current status is. It is analogous to the Kubernetes API
 //! server's object store for Pod resources.
 
-use dashmap::DashMap;
+use dashmap::{DashMap, mapref::entry::Entry};
 use std::sync::Arc;
 
 use swarm_core::{
@@ -69,13 +69,17 @@ impl AgentRegistry {
     /// exists.
     pub fn register(&self, descriptor: AgentDescriptor) -> SwarmResult<AgentId> {
         let id = descriptor.id;
-        if self.agents.contains_key(&id) {
-            return Err(SwarmError::Internal {
-                reason: format!("agent {} is already registered", id),
-            });
-        }
         let record = AgentRecord::new(descriptor);
-        self.agents.insert(id, record);
+        match self.agents.entry(id) {
+            Entry::Vacant(entry) => {
+                entry.insert(record);
+            }
+            Entry::Occupied(_) => {
+                return Err(SwarmError::Internal {
+                    reason: format!("agent {} is already registered", id),
+                });
+            }
+        }
         tracing::info!(agent_id = %id, "Agent registered");
         Ok(id)
     }

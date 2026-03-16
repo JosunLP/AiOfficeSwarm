@@ -85,7 +85,7 @@ impl PolicyEngine {
                 PolicyOutcome::Allow => {
                     tracing::debug!(
                         policy = policy.name(),
-                        action = context.action,
+                        action = %context.action,
                         "Policy allowed action"
                     );
                     return Ok(PolicyDecision::Allowed);
@@ -93,9 +93,9 @@ impl PolicyEngine {
                 PolicyOutcome::Deny { reason } => {
                     tracing::warn!(
                         policy = policy.name(),
-                        action = context.action,
-                        subject = context.subject,
-                        reason = reason,
+                        action = %context.action,
+                        subject = %context.subject,
+                        reason = %reason,
                         "Policy denied action"
                     );
                     return Ok(PolicyDecision::Denied {

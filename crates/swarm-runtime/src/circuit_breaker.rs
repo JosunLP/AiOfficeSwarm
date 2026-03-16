@@ -124,7 +124,7 @@ impl CircuitBreaker {
             }),
             CircuitState::Open { retry_after, .. } => {
                 if Utc::now() >= *retry_after {
-                    tracing::info!(circuit = self.name, "Circuit transitioning to HalfOpen");
+                    tracing::info!(circuit = %self.name, "Circuit transitioning to HalfOpen");
                     inner.state = CircuitState::HalfOpen {
                         probe_in_flight: true,
                     };
@@ -146,7 +146,7 @@ impl CircuitBreaker {
     pub fn record_success(&self) {
         let mut inner = self.inner.lock().unwrap();
         if matches!(inner.state, CircuitState::HalfOpen { .. }) {
-            tracing::info!(circuit = self.name, "Circuit closed after successful probe");
+            tracing::info!(circuit = %self.name, "Circuit closed after successful probe");
         }
         inner.state = CircuitState::Closed;
         inner.consecutive_failures = 0;
@@ -167,7 +167,7 @@ impl CircuitBreaker {
             let retry_after = opened_at
                 + chrono::Duration::seconds(inner.config.open_duration_secs as i64);
             tracing::warn!(
-                circuit = self.name,
+                circuit = %self.name,
                 failures = inner.consecutive_failures,
                 "Circuit opened due to repeated failures"
             );

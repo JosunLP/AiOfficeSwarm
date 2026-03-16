@@ -1,6 +1,6 @@
 //! Plugin registry: tracks all loaded plugins and their state.
 
-use dashmap::DashMap;
+use dashmap::{DashMap, mapref::entry::Entry};
 use std::sync::Arc;
 
 use swarm_core::{
@@ -37,16 +37,20 @@ impl PluginRegistry {
     /// Register a plugin (transitions to `Discovered` state).
     pub fn register(&self, manifest: PluginManifest) -> SwarmResult<PluginId> {
         let id = manifest.id;
-        if self.plugins.contains_key(&id) {
-            return Err(SwarmError::Internal {
-                reason: format!("plugin {} is already registered", id),
-            });
-        }
         let record = PluginRecord {
             manifest,
             state: PluginState::Discovered,
         };
-        self.plugins.insert(id, record);
+        match self.plugins.entry(id) {
+            Entry::Vacant(entry) => {
+                entry.insert(record);
+            }
+            Entry::Occupied(_) => {
+                return Err(SwarmError::Internal {
+                    reason: format!("plugin {} is already registered", id),
+                });
+            }
+        }
         Ok(id)
     }
 
@@ -112,5 +116,14 @@ mod tests {
         reg.update_state(&id, PluginState::Active).unwrap();
         assert!(reg.get(&id).unwrap().state.is_active());
         assert_eq!(reg.active_plugins().len(), 1);
+    }
+
+    #[test]
+    fn register_duplicate_fails() {
+        let reg = PluginRegistry::new();
+        let manifest = make_manifest("plugin");
+        let id = reg.register(manifest.clone()).unwrap();
+        let duplicate = PluginManifest { id, ..manifest };
+        assert!(reg.register(duplicate).is_err());
     }
 }

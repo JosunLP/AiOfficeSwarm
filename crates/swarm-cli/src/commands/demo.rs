@@ -45,14 +45,14 @@ impl Agent for EchoWorker {
 
     async fn execute(&mut self, task: Task) -> SwarmResult<serde_json::Value> {
         tracing::info!(
-            agent = self.descriptor.name,
+            agent = %self.descriptor.name,
             task = task.spec.name,
             "EchoWorker executing task"
         );
         // Simulate a small amount of work.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         Ok(serde_json::json!({
-            "agent": self.descriptor.name,
+            "agent": &self.descriptor.name,
             "task": task.spec.name,
             "echo": task.spec.input,
         }))

@@ -59,13 +59,13 @@ impl Agent for TextProcessingAgent {
         // Simulate processing.
         let word_count = text.split_whitespace().count();
         info!(
-            agent = self.descriptor.name,
+            agent = %self.descriptor.name,
             task = task.spec.name,
             word_count,
             "Processing text task"
         );
         Ok(json!({
-            "agent": self.descriptor.name,
+            "agent": &self.descriptor.name,
             "original_length": text.len(),
             "word_count": word_count,
             "summary": format!("[Summary of {} words]", word_count),
@@ -112,14 +112,14 @@ impl Agent for DataAnalysisAgent {
         let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
 
         info!(
-            agent = self.descriptor.name,
+            agent = %self.descriptor.name,
             task = task.spec.name,
             n = values.len(),
             "Analyzing data"
         );
 
         Ok(json!({
-            "agent": self.descriptor.name,
+            "agent": &self.descriptor.name,
             "n": values.len(),
             "sum": sum,
             "mean": mean,

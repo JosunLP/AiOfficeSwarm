@@ -54,7 +54,11 @@ impl TaskRunner {
         let agent_id = self.agent_id();
 
         // Check circuit breaker before attempting execution.
-        self.circuit_breaker.acquire()?;
+        if let Err(error) = self.circuit_breaker.acquire() {
+            self.handle
+                .record_task_failed(task_id, agent_id, error.to_string())?;
+            return Err(error);
+        }
 
         // Tell the orchestrator execution is starting.
         self.handle.record_task_started(task_id, agent_id)?;
@@ -240,5 +244,15 @@ mod tests {
             Err(SwarmError::Internal { reason })
                 if reason.contains("circuit 'ok-worker' is open")
         ));
+
+        let failed_task = runner.handle.get_task(&task_id).unwrap();
+        assert_eq!(failed_task.status.label(), "failed");
+        let agent_record = runner
+            .handle
+            .list_agents()
+            .into_iter()
+            .find(|record| record.descriptor.id == agent_id)
+            .unwrap();
+        assert_eq!(agent_record.status.label(), "ready");
     }
 }

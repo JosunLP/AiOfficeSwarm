@@ -140,7 +140,7 @@ pub unsafe extern "C" fn swarm_invoke(
             let bytes = msg.as_bytes();
             let n = bytes.len().min(result_cap);
             result_buf[..n].copy_from_slice(&bytes[..n]);
-            -(n as i32)
+            if n == 0 { -1 } else { -(n as i32) }
         }
     }
 }

@@ -86,7 +86,7 @@ impl Scheduler {
         tracing::info!(
             task_id = %task.id,
             agent_id = %chosen.descriptor.id,
-            agent_name = chosen.descriptor.name,
+            agent_name = %chosen.descriptor.name,
             "Task scheduled to agent"
         );
 
