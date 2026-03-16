@@ -79,14 +79,16 @@ impl PluginHost {
         action: &str,
         params: serde_json::Value,
     ) -> SwarmResult<serde_json::Value> {
-        let instance = self.instances.get(plugin_id).ok_or_else(|| {
-            SwarmError::PluginOperationFailed {
+        let instance = self
+            .instances
+            .get(plugin_id)
+            .map(|entry| Arc::clone(entry.value()))
+            .ok_or_else(|| SwarmError::PluginOperationFailed {
                 name: plugin_id.to_string(),
                 reason: "plugin not loaded".into(),
-            }
-        })?;
+            })?;
 
-        let plugin = instance.value().lock().await;
+        let plugin = instance.lock().await;
         let name = plugin.manifest().name.clone();
         plugin.invoke(action, params).await.map_err(|e| {
             SwarmError::PluginOperationFailed {
@@ -136,10 +138,14 @@ impl PluginHost {
     /// Perform health checks on all active plugins and return a map of
     /// plugin ID → health result.
     pub async fn health_check_all(&self) -> Vec<(PluginId, SwarmResult<()>)> {
+        let instances: Vec<_> = self
+            .instances
+            .iter()
+            .map(|entry| (*entry.key(), Arc::clone(entry.value())))
+            .collect();
         let mut results = Vec::new();
-        for entry in self.instances.iter() {
-            let id = *entry.key();
-            let plugin = entry.value().lock().await;
+        for (id, instance) in instances {
+            let plugin = instance.lock().await;
             let result = plugin.health_check().await;
             results.push((id, result));
         }

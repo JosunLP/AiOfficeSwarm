@@ -32,7 +32,10 @@ pub enum CircuitState {
         retry_after: DateTime<Utc>,
     },
     /// One probe call is allowed; outcome determines next state.
-    HalfOpen,
+    HalfOpen {
+        /// Whether the single probe permit has already been claimed.
+        probe_in_flight: bool,
+    },
 }
 
 /// Configuration for a circuit breaker.
@@ -96,7 +99,8 @@ impl CircuitBreaker {
     pub fn is_closed(&self) -> bool {
         let inner = self.inner.lock().unwrap();
         match &inner.state {
-            CircuitState::Closed | CircuitState::HalfOpen => true,
+            CircuitState::Closed => true,
+            CircuitState::HalfOpen { probe_in_flight } => !probe_in_flight,
             CircuitState::Open { retry_after, .. } => Utc::now() >= *retry_after,
         }
     }
@@ -110,11 +114,21 @@ impl CircuitBreaker {
         let mut inner = self.inner.lock().unwrap();
         match &inner.state {
             CircuitState::Closed => Ok(()),
-            CircuitState::HalfOpen => Ok(()),
+            CircuitState::HalfOpen { probe_in_flight: false } => {
+                inner.state = CircuitState::HalfOpen {
+                    probe_in_flight: true,
+                };
+                Ok(())
+            }
+            CircuitState::HalfOpen { probe_in_flight: true } => Err(SwarmError::Internal {
+                reason: format!("circuit '{}' is half-open; probe already in flight", self.name),
+            }),
             CircuitState::Open { retry_after, .. } => {
                 if Utc::now() >= *retry_after {
                     tracing::info!(circuit = self.name, "Circuit transitioning to HalfOpen");
-                    inner.state = CircuitState::HalfOpen;
+                    inner.state = CircuitState::HalfOpen {
+                        probe_in_flight: true,
+                    };
                     Ok(())
                 } else {
                     Err(SwarmError::Internal {
@@ -132,7 +146,7 @@ impl CircuitBreaker {
     /// resets the failure counter.
     pub fn record_success(&self) {
         let mut inner = self.inner.lock().unwrap();
-        if inner.state == CircuitState::HalfOpen {
+        if matches!(inner.state, CircuitState::HalfOpen { .. }) {
             tracing::info!(circuit = self.name, "Circuit closed after successful probe");
         }
         inner.state = CircuitState::Closed;
@@ -146,7 +160,7 @@ impl CircuitBreaker {
         inner.consecutive_failures += 1;
         let should_open = match &inner.state {
             CircuitState::Closed => inner.consecutive_failures >= inner.config.failure_threshold,
-            CircuitState::HalfOpen => true,
+            CircuitState::HalfOpen { .. } => true,
             CircuitState::Open { .. } => false,
         };
         if should_open {
@@ -198,6 +212,33 @@ mod tests {
         cb.record_failure();
         cb.record_success(); // reset
         cb.record_failure(); // 1st failure again
+        assert!(cb.acquire().is_ok());
+    }
+
+    #[test]
+    fn half_open_allows_only_one_in_flight_probe() {
+        let cb = CircuitBreaker::with_config(
+            "test",
+            CircuitBreakerConfig {
+                failure_threshold: 1,
+                open_duration_secs: 0,
+            },
+        );
+
+        cb.record_failure();
+        assert!(matches!(cb.state(), CircuitState::Open { .. }));
+
+        assert!(cb.acquire().is_ok());
+        assert!(matches!(
+            cb.state(),
+            CircuitState::HalfOpen {
+                probe_in_flight: true
+            }
+        ));
+        assert!(cb.acquire().is_err());
+
+        cb.record_success();
+        assert_eq!(cb.state(), CircuitState::Closed);
         assert!(cb.acquire().is_ok());
     }
 }

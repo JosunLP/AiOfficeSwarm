@@ -187,12 +187,12 @@ impl WasmManifestFile {
         Self::from_toml_str(&content)
     }
 
-    /// Convert to a [`PluginManifest`] and the **absolute** path of the WASM
-    /// binary, resolved relative to `manifest_dir`.
+    /// Convert to a [`PluginManifest`] and the WASM binary path obtained by
+    /// joining `manifest_dir` with the manifest's relative `wasm_file`.
     ///
     /// # Errors
-    /// Returns [`SwarmError::Internal`] if `manifest_dir` cannot be
-    /// canonicalized or the resolved WASM path does not exist.
+    /// Returns [`SwarmError::Internal`] if the resolved WASM path does not
+    /// exist.
     pub fn into_plugin_manifest_and_wasm_path(
         self,
         manifest_dir: &Path,

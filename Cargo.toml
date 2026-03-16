@@ -28,7 +28,6 @@ categories = ["asynchronous", "concurrency"]
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1.36", features = ["full"] }
-tokio-util = { version = "0.7", features = ["full"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

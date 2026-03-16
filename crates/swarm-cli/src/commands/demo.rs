@@ -16,7 +16,7 @@ use swarm_core::{
     agent::{Agent, AgentDescriptor, AgentKind},
     capability::{Capability, CapabilitySet},
     error::SwarmResult,
-    task::{Task, TaskSpec},
+    task::{Task, TaskSpec, TaskStatus},
 };
 use swarm_orchestrator::Orchestrator;
 use swarm_runtime::TaskRunner;
@@ -124,12 +124,17 @@ pub async fn run(args: DemoArgs, _config: &SwarmConfig) -> anyhow::Result<()> {
         // Schedule the next task.
         if let Some(task_id) = handle.try_schedule_next()? {
             let task = handle.get_task(&task_id)?;
+            let assigned_to = match task.status {
+                TaskStatus::Scheduled { assigned_to } => assigned_to,
+                _ => anyhow::bail!("scheduled task {task_id} was not in the scheduled state"),
+            };
 
-            // Round-robin between the two runners.
-            let result = if completed % 2 == 0 {
+            let result = if assigned_to == runner1.agent_id() {
                 runner1.run_task(task).await
-            } else {
+            } else if assigned_to == runner2.agent_id() {
                 runner2.run_task(task).await
+            } else {
+                anyhow::bail!("task {task_id} was assigned to unknown agent {assigned_to}");
             };
 
             match result {
