@@ -64,11 +64,18 @@ impl TaskRunner {
         // If this fails (e.g., wrong assigned agent), record the task as
         // failed and reset the agent so neither gets stuck.
         if let Err(start_err) = self.handle.record_task_started(task_id, agent_id) {
-            let _ = self.handle.record_task_failed(
+            if let Err(record_err) = self.handle.record_task_failed(
                 task_id,
                 agent_id,
                 start_err.to_string(),
-            );
+            ) {
+                tracing::error!(
+                    task_id = %task_id,
+                    agent_id = %agent_id,
+                    error = %record_err,
+                    "failed to record task failure after record_task_started error"
+                );
+            }
             return Err(start_err);
         }
 

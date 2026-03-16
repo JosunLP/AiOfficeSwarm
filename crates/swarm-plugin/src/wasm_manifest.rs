@@ -207,9 +207,9 @@ impl WasmManifestFile {
                 manifest_dir.display()
             ),
         })?;
-        let canonical_wasm = wasm_path.canonicalize().map_err(|_| SwarmError::Internal {
+        let canonical_wasm = wasm_path.canonicalize().map_err(|e| SwarmError::Internal {
             reason: format!(
-                "WASM binary not found at '{}' (resolved from manifest)",
+                "WASM binary not found (or inaccessible) at '{}': {e}",
                 wasm_path.display()
             ),
         })?;
