@@ -30,13 +30,13 @@ platforms).
 cargo build --workspace
 
 # Run the built-in demo
-cargo run --bin swarm -- demo
+cargo run -p swarm-cli --bin swarm -- demo
 
 # Run the basic_swarm example
-cargo run --bin basic_swarm
+cargo run -p basic_swarm --bin basic_swarm
 
 # Show effective configuration
-cargo run --bin swarm -- config
+cargo run -p swarm-cli --bin swarm -- config
 
 # Run all tests
 cargo test --workspace

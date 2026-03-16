@@ -199,17 +199,33 @@ impl WasmManifestFile {
     ) -> SwarmResult<(PluginManifest, PathBuf)> {
         let wasm_path = manifest_dir.join(&self.plugin.wasm_file);
 
-        if !wasm_path.exists() {
+        // Canonicalize both paths to prevent directory-traversal attacks
+        // (e.g., wasm_file = "../outside.wasm").
+        let canonical_dir = manifest_dir.canonicalize().map_err(|e| SwarmError::Internal {
+            reason: format!(
+                "could not canonicalize manifest directory '{}': {e}",
+                manifest_dir.display()
+            ),
+        })?;
+        let canonical_wasm = wasm_path.canonicalize().map_err(|_| SwarmError::Internal {
+            reason: format!(
+                "WASM binary not found at '{}' (resolved from manifest)",
+                wasm_path.display()
+            ),
+        })?;
+
+        if !canonical_wasm.starts_with(&canonical_dir) {
             return Err(SwarmError::Internal {
                 reason: format!(
-                    "WASM binary not found at '{}' (resolved from manifest)",
-                    wasm_path.display()
+                    "WASM binary path '{}' escapes the plugin directory '{}'",
+                    self.plugin.wasm_file.display(),
+                    manifest_dir.display()
                 ),
             });
         }
 
         let manifest = self.into_plugin_manifest();
-        Ok((manifest, wasm_path))
+        Ok((manifest, canonical_wasm))
     }
 
     /// Convert to a [`PluginManifest`] without resolving the WASM path.

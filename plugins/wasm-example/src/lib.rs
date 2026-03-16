@@ -36,11 +36,15 @@
 
 extern crate alloc;
 
-use alloc::{string::String, vec::Vec};
+// ─── Panic handler ────────────────────────────────────────────────────────────
 
-// Use the system allocator for wasm32-unknown-unknown.
+// `no_std` + `cdylib` requires a panic handler.  We simply trap (abort)
+// because there is nowhere meaningful to unwind in a WASM sandbox.
 #[cfg(target_arch = "wasm32")]
-use alloc::alloc::GlobalAlloc;
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    core::arch::wasm32::unreachable()
+}
 
 // ─── Global allocator ─────────────────────────────────────────────────────────
 

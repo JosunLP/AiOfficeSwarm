@@ -61,7 +61,16 @@ impl TaskRunner {
         }
 
         // Tell the orchestrator execution is starting.
-        self.handle.record_task_started(task_id, agent_id)?;
+        // If this fails (e.g., wrong assigned agent), record the task as
+        // failed and reset the agent so neither gets stuck.
+        if let Err(start_err) = self.handle.record_task_started(task_id, agent_id) {
+            let _ = self.handle.record_task_failed(
+                task_id,
+                agent_id,
+                start_err.to_string(),
+            );
+            return Err(start_err);
+        }
 
         // Determine timeout from the task spec.
         let timeout = task.spec.timeout.unwrap_or(Duration::from_secs(300));

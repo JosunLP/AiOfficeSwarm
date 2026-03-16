@@ -21,7 +21,7 @@ use swarm_core::{
     agent::{Agent, AgentDescriptor, AgentKind},
     capability::{Capability, CapabilitySet},
     error::SwarmResult,
-    task::{Task, TaskPriority, TaskSpec},
+    task::{Task, TaskPriority, TaskSpec, TaskStatus},
 };
 use swarm_orchestrator::Orchestrator;
 use swarm_plugin::PluginHost;
@@ -233,9 +233,18 @@ async fn main() -> anyhow::Result<()> {
 
     // Mark agents ready again for task 3.
     handle.set_agent_ready(text_runner.agent_id())?;
+    handle.set_agent_ready(data_runner.agent_id())?;
     if let Some(task_id) = handle.try_schedule_next()? {
         let task = handle.get_task(&task_id)?;
-        let output = text_runner.run_task(task).await?;
+        let assigned_to = match task.status {
+            TaskStatus::Scheduled { assigned_to } => assigned_to,
+            _ => anyhow::bail!("scheduled task {task_id} not in expected Scheduled state"),
+        };
+        let output = if assigned_to == text_runner.agent_id() {
+            text_runner.run_task(task).await?
+        } else {
+            data_runner.run_task(task).await?
+        };
         metrics.inc_tasks_completed();
         println!("  ✓ summarize-meeting → {:?}", output["summary"]);
     }

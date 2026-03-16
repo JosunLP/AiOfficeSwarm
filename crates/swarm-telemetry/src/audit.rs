@@ -56,6 +56,10 @@ impl AuditLogger {
     }
 
     /// Record an audit entry.
+    ///
+    /// If the internal mutex is poisoned (a previous writer panicked), the
+    /// lock is recovered so that auditing can continue rather than causing a
+    /// cascading panic.
     pub fn record(&self, entry: AuditEntry) {
         tracing::info!(
             action = %entry.action,
@@ -64,7 +68,10 @@ impl AuditLogger {
             outcome = ?entry.outcome,
             "[AUDIT]"
         );
-        self.entries.lock().unwrap().push(entry);
+        match self.entries.lock() {
+            Ok(mut entries) => entries.push(entry),
+            Err(poisoned) => poisoned.into_inner().push(entry),
+        }
     }
 
     /// Convenience method to log an allowed action.
@@ -106,12 +113,18 @@ impl AuditLogger {
 
     /// Return all recorded entries (for testing or reporting).
     pub fn entries(&self) -> Vec<AuditEntry> {
-        self.entries.lock().unwrap().clone()
+        match self.entries.lock() {
+            Ok(entries) => entries.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 
     /// Clear all entries.
     pub fn clear(&self) {
-        self.entries.lock().unwrap().clear();
+        match self.entries.lock() {
+            Ok(mut entries) => entries.clear(),
+            Err(poisoned) => poisoned.into_inner().clear(),
+        }
     }
 }
 
