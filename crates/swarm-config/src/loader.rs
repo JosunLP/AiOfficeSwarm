@@ -38,11 +38,13 @@ impl ConfigLoader {
 
     /// Load configuration with environment variable overrides applied.
     ///
-    /// Environment variables use the `SWARM_` prefix and `__` as the
-    /// hierarchy separator (e.g., `SWARM_ORCHESTRATOR__LOG_LEVEL=debug`).
+    /// This is a best-effort layer: only explicitly recognized flat variables
+    /// are applied today and unknown variables are silently ignored.
     ///
-    /// This is a best-effort layer: only explicitly recognized variables are
-    /// applied. Unknown variables are silently ignored.
+    /// Supported variables:
+    /// - `SWARM_LOG_LEVEL`
+    /// - `SWARM_INSTANCE_NAME`
+    /// - `SWARM_EVENT_CHANNEL_CAPACITY`
     pub fn with_env_overrides(mut config: SwarmConfig) -> SwarmConfig {
         if let Ok(level) = std::env::var("SWARM_LOG_LEVEL") {
             config.telemetry.log_level = level;

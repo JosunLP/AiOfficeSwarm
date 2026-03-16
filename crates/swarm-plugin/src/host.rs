@@ -86,7 +86,7 @@ impl PluginHost {
             }
         })?;
 
-        let plugin = instance.lock().await;
+        let plugin = instance.value().lock().await;
         let name = plugin.manifest().name.clone();
         plugin.invoke(action, params).await.map_err(|e| {
             SwarmError::PluginOperationFailed {
@@ -139,7 +139,7 @@ impl PluginHost {
         let mut results = Vec::new();
         for entry in self.instances.iter() {
             let id = *entry.key();
-            let plugin = entry.lock().await;
+            let plugin = entry.value().lock().await;
             let result = plugin.health_check().await;
             results.push((id, result));
         }

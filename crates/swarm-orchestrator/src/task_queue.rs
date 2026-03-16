@@ -22,19 +22,24 @@ struct QueueEntry {
     enqueued_at: Timestamp,
 }
 
+type QueueKey = (i32, Timestamp, u64);
+
+#[derive(Debug, Default)]
+struct TaskQueueInner {
+    queue: BTreeMap<QueueKey, QueueEntry>,
+    index: HashMap<TaskId, QueueKey>,
+    next_sequence: u64,
+}
+
 /// A thread-safe, priority-ordered queue of pending tasks.
 ///
-/// Internally uses a `BTreeMap` keyed on `(negated_priority, enqueued_at)` so
-/// that higher-priority tasks sort first, and tasks at the same priority are
-/// FIFO by submission time. A parallel `HashMap<TaskId, key>` provides O(1)
-/// lookup by task ID for cancellation.
+/// Internally uses a single mutex guarding both the ordered queue and the
+/// ID index. Keys are `(negated_priority, enqueued_at, sequence)` so that
+/// higher-priority tasks sort first, tasks at the same priority remain FIFO,
+/// and inserts are always unique even when timestamps collide.
 #[derive(Clone, Default)]
 pub struct TaskQueue {
-    // Key: (negated priority as i32, enqueued_at) for natural sort order
-    inner: Arc<Mutex<BTreeMap<(i32, Timestamp), QueueEntry>>>,
-    // Parallel index for O(1) lookup by TaskId (HashMap, not BTreeMap, since
-    // TaskId doesn't implement Ord)
-    index: Arc<Mutex<HashMap<TaskId, (i32, Timestamp)>>>,
+    inner: Arc<Mutex<TaskQueueInner>>,
 }
 
 impl TaskQueue {
@@ -55,10 +60,13 @@ impl TaskQueue {
         }
         let priority_key = -(task.spec.priority as i32);
         let enqueued_at = swarm_core::types::now();
-        let key = (priority_key, enqueued_at);
+        let mut inner = self.inner.lock().unwrap();
+        let sequence = inner.next_sequence;
+        inner.next_sequence += 1;
+        let key = (priority_key, enqueued_at, sequence);
         let entry = QueueEntry { task: task.clone(), enqueued_at };
-        self.inner.lock().unwrap().insert(key, entry);
-        self.index.lock().unwrap().insert(task.id, key);
+        inner.queue.insert(key, entry);
+        inner.index.insert(task.id, key);
         Ok(())
     }
 
@@ -67,6 +75,7 @@ impl TaskQueue {
         self.inner
             .lock()
             .unwrap()
+            .queue
             .values()
             .next()
             .map(|e| e.task.clone())
@@ -75,23 +84,21 @@ impl TaskQueue {
     /// Remove and return the highest-priority pending task.
     pub fn dequeue(&self) -> Option<Task> {
         let mut queue = self.inner.lock().unwrap();
-        let key = queue.keys().next().cloned()?;
-        let entry = queue.remove(&key)?;
-        self.index.lock().unwrap().remove(&entry.task.id);
+        let key = queue.queue.keys().next().cloned()?;
+        let entry = queue.queue.remove(&key)?;
+        queue.index.remove(&entry.task.id);
         Some(entry.task)
     }
 
     /// Remove a task by ID (e.g., when cancelling before scheduling).
     pub fn remove(&self, task_id: &TaskId) -> SwarmResult<Task> {
-        let key = self
+        let mut inner = self.inner.lock().unwrap();
+        let key = inner
             .index
-            .lock()
-            .unwrap()
             .remove(task_id)
             .ok_or_else(|| SwarmError::TaskNotFound { id: *task_id })?;
-        self.inner
-            .lock()
-            .unwrap()
+        inner
+            .queue
             .remove(&key)
             .map(|e| e.task)
             .ok_or_else(|| SwarmError::TaskNotFound { id: *task_id })
@@ -99,12 +106,12 @@ impl TaskQueue {
 
     /// Return the number of tasks currently in the queue.
     pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().len()
+        self.inner.lock().unwrap().queue.len()
     }
 
     /// Returns `true` if the queue is empty.
     pub fn is_empty(&self) -> bool {
-        self.inner.lock().unwrap().is_empty()
+        self.inner.lock().unwrap().queue.is_empty()
     }
 }
 
@@ -164,5 +171,21 @@ mod tests {
         queue.enqueue(make_task(TaskPriority::Normal)).unwrap();
         queue.enqueue(make_task(TaskPriority::High)).unwrap();
         assert_eq!(queue.len(), 2);
+    }
+
+    #[test]
+    fn remove_one_task_does_not_drop_another_with_same_timestamp() {
+        let queue = TaskQueue::new();
+        let t1 = make_task(TaskPriority::Normal);
+        let t2 = make_task(TaskPriority::Normal);
+        let id2 = t2.id;
+
+        queue.enqueue(t1).unwrap();
+        queue.enqueue(t2).unwrap();
+
+        let first = queue.dequeue().unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.peek().unwrap().id, id2);
+        assert_ne!(first.id, queue.peek().unwrap().id);
     }
 }

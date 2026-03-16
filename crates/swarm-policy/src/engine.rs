@@ -72,9 +72,11 @@ impl PolicyEngine {
 
     /// Evaluate all registered policies for the given context.
     ///
-    /// Returns:
-    /// - [`PolicyDecision::Allowed`] if no policy denies the action.
-    /// - [`PolicyDecision::Denied`] if any policy denies the action.
+    /// Returns the first explicit decision in descending policy priority order.
+    ///
+    /// - [`PolicyDecision::Allowed`] if the first non-abstaining policy allows.
+    /// - [`PolicyDecision::Denied`] if the first non-abstaining policy denies.
+    /// - The configured default decision if all policies abstain.
     pub async fn evaluate(&self, context: &PolicyContext) -> SwarmResult<PolicyDecision> {
         let policies = self.policies.read().await;
 

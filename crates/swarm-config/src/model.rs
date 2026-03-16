@@ -39,9 +39,11 @@ pub struct OrchestratorConfig {
     pub event_channel_capacity: usize,
     /// How many task dispatch attempts per scheduling tick.
     pub max_dispatch_per_tick: usize,
-    /// Default task timeout in seconds (0 = no timeout).
+    /// Reserved for future runtime enforcement: default task timeout in seconds
+    /// when a task spec does not provide its own timeout (0 = no timeout).
     pub default_task_timeout_secs: u64,
-    /// Maximum number of concurrent tasks across the whole swarm.
+    /// Reserved for future scheduler/runtime enforcement: maximum number of
+    /// concurrent tasks across the whole swarm.
     pub max_concurrent_tasks: usize,
 }
 

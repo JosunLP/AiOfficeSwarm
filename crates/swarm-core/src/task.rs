@@ -200,9 +200,13 @@ impl Task {
     /// Transition the task to `Running`.
     ///
     /// # Errors
-    /// Returns the current status if the task is not in the `Scheduled` state.
+    /// Returns the current status if the task is not in the `Scheduled` state
+    /// for the same assigned agent.
     pub fn start_running(&mut self, agent_id: AgentId) -> Result<(), &TaskStatus> {
-        if !matches!(self.status, TaskStatus::Scheduled { .. }) {
+        if !matches!(
+            self.status,
+            TaskStatus::Scheduled { assigned_to } if assigned_to == agent_id
+        ) {
             return Err(&self.status);
         }
         self.attempt_count += 1;
@@ -232,6 +236,13 @@ impl Task {
             reason: reason.into(),
             attempts: self.attempt_count,
         };
+        self.updated_at = now;
+    }
+
+    /// Mark the task as timed out.
+    pub fn time_out(&mut self) {
+        let now = Utc::now();
+        self.status = TaskStatus::TimedOut { timed_out_at: now };
         self.updated_at = now;
     }
 }
@@ -284,5 +295,29 @@ mod tests {
         assert!(TaskPriority::Critical > TaskPriority::High);
         assert!(TaskPriority::High > TaskPriority::Normal);
         assert!(TaskPriority::Normal > TaskPriority::Low);
+    }
+
+    #[test]
+    fn start_running_rejects_wrong_agent() {
+        let mut task = make_task();
+        let scheduled_agent = AgentId::new();
+        let other_agent = AgentId::new();
+
+        task.schedule(scheduled_agent).unwrap();
+
+        assert!(task.start_running(other_agent).is_err());
+        assert!(matches!(
+            task.status,
+            TaskStatus::Scheduled { assigned_to } if assigned_to == scheduled_agent
+        ));
+        assert_eq!(task.attempt_count, 0);
+    }
+
+    #[test]
+    fn task_can_time_out() {
+        let mut task = make_task();
+        task.time_out();
+        assert!(task.status.is_terminal());
+        assert_eq!(task.status.label(), "timed_out");
     }
 }

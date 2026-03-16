@@ -144,12 +144,13 @@ impl OrchestratorHandle {
 
     /// Mark an agent as ready to receive tasks.
     pub fn set_agent_ready(&self, id: AgentId) -> SwarmResult<()> {
+        let previous = self.state.registry.get(&id)?.status.label().to_string();
         self.state
             .registry
             .update_status(&id, AgentStatus::Ready)?;
         self.state.emit(EventKind::AgentStatusChanged {
             agent_id: id,
-            previous: "inactive".into(),
+            previous,
             current: "ready".into(),
         });
         Ok(())
@@ -214,12 +215,15 @@ impl OrchestratorHandle {
             SchedulingDecision::Assigned { task_id, agent_id } => {
                 // Remove from queue, update task status.
                 self.state.task_queue.remove(&task_id)?;
-                if let Some(mut t) = self.state.tasks.get_mut(&task_id) {
-                    t.schedule(agent_id).map_err(|s| SwarmError::AgentInvalidState {
-                        id: agent_id,
-                        reason: format!("task in state {}", s.label()),
-                    })?;
-                }
+                let mut t = self
+                    .state
+                    .tasks
+                    .get_mut(&task_id)
+                    .ok_or(SwarmError::TaskNotFound { id: task_id })?;
+                t.schedule(agent_id).map_err(|s| SwarmError::AgentInvalidState {
+                    id: agent_id,
+                    reason: format!("task in state {}", s.label()),
+                })?;
                 // Mark agent as busy.
                 self.state
                     .registry
@@ -234,12 +238,15 @@ impl OrchestratorHandle {
 
     /// Record that an agent has started executing a task.
     pub fn record_task_started(&self, task_id: TaskId, agent_id: AgentId) -> SwarmResult<()> {
-        if let Some(mut t) = self.state.tasks.get_mut(&task_id) {
-            t.start_running(agent_id).map_err(|s| SwarmError::AgentInvalidState {
-                id: agent_id,
-                reason: format!("task in state {}", s.label()),
-            })?;
-        }
+        let mut t = self
+            .state
+            .tasks
+            .get_mut(&task_id)
+            .ok_or(SwarmError::TaskNotFound { id: task_id })?;
+        t.start_running(agent_id).map_err(|s| SwarmError::AgentInvalidState {
+            id: agent_id,
+            reason: format!("task in state {}", s.label()),
+        })?;
         self.state.emit(EventKind::TaskStarted { task_id, agent_id });
         Ok(())
     }
@@ -251,9 +258,12 @@ impl OrchestratorHandle {
         agent_id: AgentId,
         output: serde_json::Value,
     ) -> SwarmResult<()> {
-        if let Some(mut t) = self.state.tasks.get_mut(&task_id) {
-            t.complete(output);
-        }
+        let mut t = self
+            .state
+            .tasks
+            .get_mut(&task_id)
+            .ok_or(SwarmError::TaskNotFound { id: task_id })?;
+        t.complete(output);
         self.state
             .registry
             .update_status(&agent_id, AgentStatus::Ready)?;
@@ -271,9 +281,12 @@ impl OrchestratorHandle {
         reason: impl Into<String>,
     ) -> SwarmResult<()> {
         let reason = reason.into();
-        if let Some(mut t) = self.state.tasks.get_mut(&task_id) {
-            t.fail(reason.clone());
-        }
+        let mut t = self
+            .state
+            .tasks
+            .get_mut(&task_id)
+            .ok_or(SwarmError::TaskNotFound { id: task_id })?;
+        t.fail(reason.clone());
         self.state
             .registry
             .update_status(&agent_id, AgentStatus::Ready)?;
@@ -283,6 +296,23 @@ impl OrchestratorHandle {
             reason: reason.clone(),
         });
         tracing::warn!(task_id = %task_id, agent_id = %agent_id, reason = reason, "Task failed");
+        Ok(())
+    }
+
+    /// Record that a task timed out while executing.
+    pub fn record_task_timed_out(&self, task_id: TaskId, agent_id: AgentId) -> SwarmResult<()> {
+        let mut t = self
+            .state
+            .tasks
+            .get_mut(&task_id)
+            .ok_or(SwarmError::TaskNotFound { id: task_id })?;
+        t.time_out();
+        self.state
+            .registry
+            .update_status(&agent_id, AgentStatus::Ready)?;
+        self.state.registry.record_task_failed(&agent_id);
+        self.state.emit(EventKind::TaskTimedOut { task_id });
+        tracing::warn!(task_id = %task_id, agent_id = %agent_id, "Task timed out");
         Ok(())
     }
 
@@ -333,6 +363,7 @@ mod tests {
     use swarm_core::{
         agent::{AgentDescriptor, AgentKind},
         capability::{Capability, CapabilitySet},
+        event::EventKind,
         task::TaskSpec,
     };
 
@@ -408,5 +439,37 @@ mod tests {
         let (handle, _) = orchestrator_with_ready_worker();
         let spec = TaskSpec::new("   ", serde_json::json!({}));
         assert!(handle.submit_task(spec).is_err());
+    }
+
+    #[test]
+    fn set_agent_ready_emits_actual_previous_status() {
+        let orch = Orchestrator::new();
+        let mut rx = orch.subscribe();
+        let handle = orch.handle();
+        let agent_id = handle
+            .register_agent(make_worker(CapabilitySet::new()))
+            .unwrap();
+
+        handle.set_agent_ready(agent_id).unwrap();
+
+        loop {
+            let event = rx.try_recv().unwrap();
+            if let EventKind::AgentStatusChanged { agent_id: event_agent, previous, current } = event.kind {
+                assert_eq!(event_agent, agent_id);
+                assert_eq!(previous, "inactive");
+                assert_eq!(current, "ready");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn record_task_started_requires_existing_task() {
+        let (handle, agent_id) = orchestrator_with_ready_worker();
+        let missing_task_id = TaskId::new();
+        assert!(matches!(
+            handle.record_task_started(missing_task_id, agent_id),
+            Err(SwarmError::TaskNotFound { id }) if id == missing_task_id
+        ));
     }
 }

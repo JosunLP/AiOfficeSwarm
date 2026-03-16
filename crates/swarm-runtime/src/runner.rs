@@ -83,8 +83,7 @@ impl TaskRunner {
             }
             Err(_elapsed) => {
                 self.circuit_breaker.record_failure();
-                let msg = format!("task {} timed out", task_id);
-                self.handle.record_task_failed(task_id, agent_id, msg.clone())?;
+                self.handle.record_task_timed_out(task_id, agent_id)?;
                 Err(SwarmError::TaskTimeout {
                     id: task_id,
                     elapsed_ms: timeout.as_millis() as u64,
@@ -107,6 +106,7 @@ mod tests {
 
     struct OkAgent { descriptor: AgentDescriptor }
     struct FailAgent { descriptor: AgentDescriptor }
+    struct SlowAgent { descriptor: AgentDescriptor }
 
     #[async_trait]
     impl Agent for OkAgent {
@@ -122,6 +122,16 @@ mod tests {
         fn descriptor(&self) -> &AgentDescriptor { &self.descriptor }
         async fn execute(&mut self, _task: Task) -> SwarmResult<serde_json::Value> {
             Err(SwarmError::Internal { reason: "agent failed".into() })
+        }
+        async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
+    }
+
+    #[async_trait]
+    impl Agent for SlowAgent {
+        fn descriptor(&self) -> &AgentDescriptor { &self.descriptor }
+        async fn execute(&mut self, _task: Task) -> SwarmResult<serde_json::Value> {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            Ok(serde_json::json!({"slow": true}))
         }
         async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
     }
@@ -174,5 +184,34 @@ mod tests {
 
         let failed_task = handle.get_task(&task_id).unwrap();
         assert_eq!(failed_task.status.label(), "failed");
+    }
+
+    #[tokio::test]
+    async fn run_task_timeout_recorded_as_timed_out() {
+        let orch = Orchestrator::new();
+        let handle = orch.handle();
+
+        let desc = AgentDescriptor::new("slow-worker", AgentKind::Worker, CapabilitySet::new());
+        let agent = SlowAgent { descriptor: desc.clone() };
+        let agent_id = desc.id;
+
+        handle.register_agent(desc).unwrap();
+        handle.set_agent_ready(agent_id).unwrap();
+
+        let mut spec = TaskSpec::new("t", serde_json::json!({}));
+        spec.timeout = Some(Duration::from_millis(5));
+        let task_id = handle.submit_task(spec).unwrap();
+        handle.try_schedule_next().unwrap();
+
+        let task = handle.get_task(&task_id).unwrap();
+        let mut runner = TaskRunner::new(Box::new(agent), handle.clone());
+
+        assert!(matches!(
+            runner.run_task(task).await,
+            Err(SwarmError::TaskTimeout { id, .. }) if id == task_id
+        ));
+
+        let timed_out_task = handle.get_task(&task_id).unwrap();
+        assert_eq!(timed_out_task.status.label(), "timed_out");
     }
 }

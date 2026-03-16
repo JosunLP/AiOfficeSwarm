@@ -2,8 +2,8 @@
 //!
 //! The audit log is an append-only record of actions that require
 //! accountability (agent registration, task scheduling, policy evaluations,
-//! plugin loads, etc.). It is intentionally separate from the tracing
-//! subscriber so that audit events are not affected by log-level filtering.
+//! plugin loads, etc.). Audit entries are always stored in the in-memory audit
+//! log even if the accompanying tracing event is filtered by log level.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
