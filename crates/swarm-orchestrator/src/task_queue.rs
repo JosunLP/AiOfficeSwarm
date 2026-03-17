@@ -5,7 +5,7 @@
 //! (FIFO within the same priority level).
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use swarm_core::{
     error::{SwarmError, SwarmResult},
@@ -48,6 +48,16 @@ impl TaskQueue {
         Self::default()
     }
 
+    fn lock_inner(&self) -> MutexGuard<'_, TaskQueueInner> {
+        match self.inner.lock() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                tracing::error!("Task queue mutex was poisoned; recovering state");
+                poisoned.into_inner()
+            }
+        }
+    }
+
     /// Enqueue a task. The task must be in the `Pending` state.
     pub fn enqueue(&self, task: Task) -> SwarmResult<()> {
         if !matches!(task.status, TaskStatus::Pending) {
@@ -60,7 +70,7 @@ impl TaskQueue {
         }
         let priority_key = -(task.spec.priority as i32);
         let enqueued_at = swarm_core::types::now();
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.lock_inner();
         let sequence = inner.next_sequence;
         inner.next_sequence += 1;
         let key = (priority_key, enqueued_at, sequence);
@@ -72,9 +82,7 @@ impl TaskQueue {
 
     /// Peek at the highest-priority pending task without removing it.
     pub fn peek(&self) -> Option<Task> {
-        self.inner
-            .lock()
-            .unwrap()
+        self.lock_inner()
             .queue
             .values()
             .next()
@@ -83,7 +91,7 @@ impl TaskQueue {
 
     /// Remove and return the highest-priority pending task.
     pub fn dequeue(&self) -> Option<Task> {
-        let mut queue = self.inner.lock().unwrap();
+        let mut queue = self.lock_inner();
         let key = queue.queue.keys().next().cloned()?;
         let entry = queue.queue.remove(&key)?;
         queue.index.remove(&entry.task.id);
@@ -92,7 +100,7 @@ impl TaskQueue {
 
     /// Remove a task by ID (e.g., when cancelling before scheduling).
     pub fn remove(&self, task_id: &TaskId) -> SwarmResult<Task> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.lock_inner();
         let key = inner
             .index
             .remove(task_id)
@@ -106,12 +114,12 @@ impl TaskQueue {
 
     /// Return the number of tasks currently in the queue.
     pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().queue.len()
+        self.lock_inner().queue.len()
     }
 
     /// Returns `true` if the queue is empty.
     pub fn is_empty(&self) -> bool {
-        self.inner.lock().unwrap().queue.is_empty()
+        self.lock_inner().queue.is_empty()
     }
 }
 
@@ -187,5 +195,20 @@ mod tests {
         assert_eq!(queue.len(), 1);
         assert_eq!(queue.peek().unwrap().id, id2);
         assert_ne!(first.id, queue.peek().unwrap().id);
+    }
+
+    #[test]
+    fn recovers_from_poisoned_mutex() {
+        let queue = TaskQueue::new();
+        let poisoned = queue.clone();
+
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = poisoned.inner.lock().unwrap();
+            panic!("poison task queue mutex");
+        }));
+
+        queue.enqueue(make_task(TaskPriority::Normal)).unwrap();
+        assert_eq!(queue.len(), 1);
+        assert!(!queue.is_empty());
     }
 }

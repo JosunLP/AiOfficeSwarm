@@ -15,8 +15,8 @@
 //! - **HalfOpen**: A single probe call is allowed. Success closes the circuit;
 //!   failure re-opens it and resets the timeout.
 
-use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
+use std::sync::{Arc, Mutex, MutexGuard};
 use swarm_core::error::{SwarmError, SwarmResult};
 
 /// The current state of a circuit breaker.
@@ -64,8 +64,9 @@ struct CircuitBreakerInner {
 
 /// A thread-safe circuit breaker.
 ///
-/// Wrap calls to a component with [`CircuitBreaker::call`] to automatically
-/// open the circuit when too many consecutive failures occur.
+/// Call [`CircuitBreaker::acquire`] before a protected operation and then
+/// [`CircuitBreaker::record_success`] or [`CircuitBreaker::record_failure`]
+/// after it completes to manage circuit state transitions.
 #[derive(Clone)]
 pub struct CircuitBreaker {
     name: String,
@@ -90,9 +91,19 @@ impl CircuitBreaker {
         }
     }
 
+    fn lock_inner(&self) -> MutexGuard<'_, CircuitBreakerInner> {
+        match self.inner.lock() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                tracing::error!(circuit = %self.name, "Circuit breaker mutex was poisoned; recovering state");
+                poisoned.into_inner()
+            }
+        }
+    }
+
     /// Returns the current state of the circuit.
     pub fn state(&self) -> CircuitState {
-        self.inner.lock().unwrap().state.clone()
+        self.lock_inner().state.clone()
     }
 
     /// Returns `true` only when the circuit is fully closed.
@@ -100,7 +111,7 @@ impl CircuitBreaker {
     /// This does not report whether a single half-open probe may be attempted;
     /// use [`CircuitBreaker::acquire`] for actual call admission.
     pub fn is_closed(&self) -> bool {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.lock_inner();
         matches!(&inner.state, CircuitState::Closed)
     }
 
@@ -110,7 +121,7 @@ impl CircuitBreaker {
     /// elapsed. If the retry window *has* elapsed, transitions to `HalfOpen`
     /// and allows the probe call.
     pub fn acquire(&self) -> SwarmResult<()> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.lock_inner();
         match &inner.state {
             CircuitState::Closed => Ok(()),
             CircuitState::HalfOpen { probe_in_flight: false } => {
@@ -144,7 +155,7 @@ impl CircuitBreaker {
     /// Record a successful call. Transitions `HalfOpen` → `Closed` and
     /// resets the failure counter.
     pub fn record_success(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.lock_inner();
         if matches!(inner.state, CircuitState::HalfOpen { .. }) {
             tracing::info!(circuit = %self.name, "Circuit closed after successful probe");
         }
@@ -155,7 +166,7 @@ impl CircuitBreaker {
     /// Record a failed call. May transition `Closed` → `Open` or
     /// `HalfOpen` → `Open`.
     pub fn record_failure(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.lock_inner();
         inner.consecutive_failures += 1;
         let should_open = match &inner.state {
             CircuitState::Closed => inner.consecutive_failures >= inner.config.failure_threshold,
@@ -260,6 +271,21 @@ mod tests {
 
         cb.record_success();
         assert_eq!(cb.state(), CircuitState::Closed);
+        assert!(cb.acquire().is_ok());
+    }
+
+    #[test]
+    fn recovers_from_poisoned_mutex() {
+        let cb = make_cb(3);
+        let poisoned = cb.clone();
+
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = poisoned.inner.lock().unwrap();
+            panic!("poison circuit breaker mutex");
+        }));
+
+        assert_eq!(cb.state(), CircuitState::Closed);
+        cb.record_failure();
         assert!(cb.acquire().is_ok());
     }
 }

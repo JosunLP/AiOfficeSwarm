@@ -32,6 +32,7 @@ pub enum DefaultDecision {
 pub struct PolicyEngine {
     policies: Arc<RwLock<Vec<Arc<dyn Policy>>>>,
     default_decision: DefaultDecision,
+    default_deny_policy_id: PolicyId,
 }
 
 impl PolicyEngine {
@@ -40,6 +41,7 @@ impl PolicyEngine {
         Self {
             policies: Arc::new(RwLock::new(Vec::new())),
             default_decision,
+            default_deny_policy_id: PolicyId::new(),
         }
     }
 
@@ -111,7 +113,7 @@ impl PolicyEngine {
         match self.default_decision {
             DefaultDecision::Allow => Ok(PolicyDecision::Allowed),
             DefaultDecision::Deny => Ok(PolicyDecision::Denied {
-                policy_id: PolicyId::new(),
+                policy_id: self.default_deny_policy_id,
                 reason: "no policy explicitly allowed this action (deny-by-default)".into(),
             }),
         }
@@ -170,6 +172,21 @@ mod tests {
         let ctx = PolicyContext::new("any-action", "anyone", "anything");
         let decision = engine.evaluate(&ctx).await.unwrap();
         assert!(decision.is_allowed());
+    }
+
+    #[tokio::test]
+    async fn deny_by_default_uses_stable_policy_id() {
+        let engine = PolicyEngine::deny_by_default();
+        let ctx = PolicyContext::new("create_task", "agent-1", "task-queue");
+        let first = match engine.evaluate(&ctx).await.unwrap() {
+            PolicyDecision::Denied { policy_id, .. } => policy_id,
+            PolicyDecision::Allowed => panic!("expected deny-by-default to deny"),
+        };
+        let second = match engine.evaluate(&ctx).await.unwrap() {
+            PolicyDecision::Denied { policy_id, .. } => policy_id,
+            PolicyDecision::Allowed => panic!("expected deny-by-default to deny"),
+        };
+        assert_eq!(first, second);
     }
 
     #[tokio::test]

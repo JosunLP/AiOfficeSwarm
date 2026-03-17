@@ -36,6 +36,11 @@
 
 extern crate alloc;
 
+#[cfg(not(target_arch = "wasm32"))]
+compile_error!(
+    "echo-plugin only supports the wasm32-unknown-unknown target; build with `cargo build --target wasm32-unknown-unknown --release`"
+);
+
 // ─── Panic handler ────────────────────────────────────────────────────────────
 
 // `no_std` + `cdylib` requires a panic handler.  We simply trap (abort)

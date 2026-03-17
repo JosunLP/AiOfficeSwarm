@@ -8,7 +8,9 @@
 //! ## Design
 //! Policies are trait objects so that new policy types can be added via the
 //! plugin system without modifying the core crate. The engine evaluates a list
-//! of policies and returns the most restrictive overall [`PolicyDecision`].
+//! of policies in priority order and returns the first explicit
+//! [`PolicyDecision`] (allow or deny); if all policies abstain, the configured
+//! default decision is applied.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

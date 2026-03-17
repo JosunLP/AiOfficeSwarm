@@ -11,7 +11,7 @@
 //! level. The executive may decide to restart the agent, reassign its tasks,
 //! or halt the affected workflow.
 
-use dashmap::DashMap;
+use dashmap::{mapref::entry::Entry, DashMap};
 use std::sync::Arc;
 
 use swarm_core::{
@@ -48,19 +48,21 @@ impl SupervisionManager {
         agent_id: AgentId,
         supervisor_id: AgentId,
     ) -> SwarmResult<()> {
-        if !self.nodes.contains_key(&supervisor_id) {
-            return Err(SwarmError::AgentNotFound { id: supervisor_id });
+        match self.nodes.entry(agent_id) {
+            Entry::Occupied(_) => Err(SwarmError::Internal {
+                reason: format!("agent {} is already registered in supervision", agent_id),
+            }),
+            Entry::Vacant(entry) => {
+                entry.insert(SupervisionTree::with_supervisor(agent_id, supervisor_id));
+                if let Some(mut supervisor_node) = self.nodes.get_mut(&supervisor_id) {
+                    supervisor_node.add_subordinate(agent_id);
+                    Ok(())
+                } else {
+                    self.nodes.remove(&agent_id);
+                    Err(SwarmError::AgentNotFound { id: supervisor_id })
+                }
+            }
         }
-        // Add the new node as a subordinate to its supervisor.
-        if let Some(mut supervisor_node) = self.nodes.get_mut(&supervisor_id) {
-            supervisor_node.add_subordinate(agent_id);
-        }
-        // Register the new agent's own node.
-        self.nodes.insert(
-            agent_id,
-            SupervisionTree::with_supervisor(agent_id, supervisor_id),
-        );
-        Ok(())
     }
 
     /// Remove an agent from the supervision tree.
@@ -135,6 +137,24 @@ mod tests {
 
         let result = mgr.register_under(worker, unknown);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_under_duplicate_agent_fails_without_overwriting() {
+        let mgr = SupervisionManager::new();
+        let exec = AgentId::new();
+        let worker = AgentId::new();
+        let other_exec = AgentId::new();
+
+        mgr.register_root(exec);
+        mgr.register_root(other_exec);
+        mgr.register_under(worker, exec).unwrap();
+
+        let result = mgr.register_under(worker, other_exec);
+        assert!(result.is_err());
+        assert_eq!(mgr.supervisor_of(&worker), Some(exec));
+        assert_eq!(mgr.subordinates_of(&exec), vec![worker]);
+        assert!(mgr.subordinates_of(&other_exec).is_empty());
     }
 
     #[test]

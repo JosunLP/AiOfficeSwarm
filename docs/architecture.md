@@ -123,7 +123,7 @@ Discovered → Loading → Active → Unloading → Unloaded
 ```
 
 The `PluginHost` manages all loaded plugin instances and routes invocations.
-Plugins are isolated behind `Arc<Mutex<Box<dyn Plugin>>>` and cannot directly
+Plugins are isolated behind `Arc<tokio::sync::Mutex<Box<dyn Plugin>>>` and cannot directly
 access orchestrator state — they must go through the public API.
 
 ---
@@ -251,8 +251,8 @@ Built-in roles: `admin`, `task-executor`, `task-submitter`, `observer`.
 | Authorization | RBAC engine with role/permission model |
 | Secret management | `SecretsProvider` abstraction (env-based default) |
 | Audit trail | `AuditLogger` with allowed/denied entries |
-| Plugin isolation | Plugins behind `Arc<Mutex<Box<dyn Plugin>>>` |
-| No unsafe code | `#![forbid(unsafe_code)]` in all crates |
+| Plugin isolation | Plugins behind `Arc<tokio::sync::Mutex<Box<dyn Plugin>>>` |
+| No unsafe code | `#![forbid(unsafe_code)]` in all workspace crates |
 | Input validation | Explicit `InvalidTaskSpec` error on malformed input |
 
 ---
