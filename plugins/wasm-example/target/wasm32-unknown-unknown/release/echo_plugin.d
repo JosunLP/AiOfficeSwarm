@@ -1,1 +1,0 @@
-/home/runner/work/AiOfficeSwarm/AiOfficeSwarm/plugins/wasm-example/target/wasm32-unknown-unknown/release/echo_plugin.wasm: /home/runner/work/AiOfficeSwarm/AiOfficeSwarm/plugins/wasm-example/src/lib.rs
