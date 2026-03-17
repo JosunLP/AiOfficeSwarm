@@ -1,9 +1,9 @@
 //! # echo-plugin — example AiOfficeSwarm WASM plugin
 //!
 //! This is a minimal, self-contained plugin that demonstrates how to
-//! implement the AiOfficeSwarm WASM ABI. It exports the six required symbols
-//! so the host ([`swarm_plugin::wasm_loader::WasmPlugin`]) can drive it
-//! through its lifecycle.
+//! implement the AiOfficeSwarm WASM ABI. It exports the six required functions
+//! plus linear memory so the host ([`swarm_plugin::wasm_loader::WasmPlugin`])
+//! can drive it through its lifecycle.
 //!
 //! ## Building
 //!

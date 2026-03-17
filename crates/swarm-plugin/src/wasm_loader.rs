@@ -58,6 +58,7 @@
 //!   `result_ptr`. If `n == -1` the error message is empty.
 
 use std::path::Path;
+use std::ops::Range;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -99,6 +100,35 @@ struct WasmRuntime {
 // All other field types (Memory, TypedFunc) are also Send + Sync in wasmtime.
 // Therefore WasmRuntime: Send + Sync by the compiler's automatic derivation.
 
+#[derive(Debug, Clone, Copy)]
+struct GuestAllocation {
+    ptr: i32,
+    len: i32,
+}
+
+#[derive(Debug, Default)]
+struct GuestAllocations(Vec<GuestAllocation>);
+
+impl GuestAllocations {
+    fn push(&mut self, ptr: i32, len: i32) {
+        self.0.push(GuestAllocation { ptr, len });
+    }
+
+    fn deallocate_all(self, rt: &mut WasmRuntime) -> SwarmResult<()> {
+        let mut first_err = None;
+
+        for allocation in self.0.into_iter().rev() {
+            if let Err(err) = WasmPlugin::dealloc(rt, allocation.ptr, allocation.len) {
+                if first_err.is_none() {
+                    first_err = Some(err);
+                }
+            }
+        }
+
+        first_err.map_or(Ok(()), Err)
+    }
+}
+
 // ─── WasmPlugin ───────────────────────────────────────────────────────────────
 
 /// A plugin backed by a precompiled WebAssembly module.
@@ -130,18 +160,32 @@ impl WasmPlugin {
     /// `swarm_alloc`. Returns `(ptr, len)` to be passed to the WASM function.
     ///
     /// The caller is responsible for calling `swarm_dealloc(ptr, len)` when done.
-    fn alloc_and_write(rt: &mut WasmRuntime, data: &[u8]) -> SwarmResult<(i32, i32)> {
-        let len = data.len() as i32;
+    fn alloc_and_write(
+        rt: &mut WasmRuntime,
+        plugin_name: &str,
+        data: &[u8],
+    ) -> SwarmResult<(i32, i32)> {
+        let len = i32::try_from(data.len()).map_err(|_| SwarmError::PluginOperationFailed {
+            name: plugin_name.into(),
+            reason: format!("input too large for WASM ABI: {} bytes", data.len()),
+        })?;
         let ptr = rt
             .fn_alloc
             .call(&mut rt.store, len)
             .map_err(|e| SwarmError::PluginOperationFailed {
-                name: "wasm".into(),
+                name: plugin_name.into(),
                 reason: format!("swarm_alloc failed: {e}"),
             })?;
 
+        let range = Self::checked_memory_range(
+            plugin_name,
+            rt.memory.data_size(&rt.store),
+            ptr,
+            data.len(),
+            "swarm_alloc returned an out-of-bounds pointer for input data",
+        )?;
         let mem = rt.memory.data_mut(&mut rt.store);
-        mem[ptr as usize..ptr as usize + data.len()].copy_from_slice(data);
+        mem[range].copy_from_slice(data);
         Ok((ptr, len))
     }
 
@@ -156,18 +200,67 @@ impl WasmPlugin {
     }
 
     /// Allocate a result buffer in WASM memory of size `RESULT_BUFFER_CAPACITY`.
-    fn alloc_result_buffer(rt: &mut WasmRuntime) -> SwarmResult<i32> {
-        rt.fn_alloc
+    fn alloc_result_buffer(rt: &mut WasmRuntime, plugin_name: &str) -> SwarmResult<i32> {
+        let ptr = rt
+            .fn_alloc
             .call(&mut rt.store, RESULT_BUFFER_CAPACITY)
             .map_err(|e| SwarmError::PluginOperationFailed {
-                name: "wasm".into(),
+                name: plugin_name.into(),
                 reason: format!("swarm_alloc (result buffer) failed: {e}"),
-            })
+            })?;
+        Self::checked_memory_range(
+            plugin_name,
+            rt.memory.data_size(&rt.store),
+            ptr,
+            0,
+            "swarm_alloc returned an invalid result buffer pointer",
+        )?;
+        Ok(ptr)
     }
 
     /// Read `len` bytes from the WASM memory at `ptr` into a `Vec<u8>`.
-    fn read_bytes(rt: &WasmRuntime, ptr: i32, len: usize) -> Vec<u8> {
-        rt.memory.data(&rt.store)[ptr as usize..ptr as usize + len].to_vec()
+    fn read_bytes(
+        rt: &WasmRuntime,
+        plugin_name: &str,
+        ptr: i32,
+        len: usize,
+    ) -> SwarmResult<Vec<u8>> {
+        let range = Self::checked_memory_range(
+            plugin_name,
+            rt.memory.data_size(&rt.store),
+            ptr,
+            len,
+            "plugin attempted to read outside linear memory",
+        )?;
+        Ok(rt.memory.data(&rt.store)[range].to_vec())
+    }
+
+    fn checked_memory_range(
+        plugin_name: &str,
+        memory_len: usize,
+        ptr: i32,
+        len: usize,
+        context: &str,
+    ) -> SwarmResult<Range<usize>> {
+        let start = usize::try_from(ptr).map_err(|_| SwarmError::PluginOperationFailed {
+            name: plugin_name.into(),
+            reason: format!("{context}: negative pointer {ptr}"),
+        })?;
+        let end = start.checked_add(len).ok_or_else(|| SwarmError::PluginOperationFailed {
+            name: plugin_name.into(),
+            reason: format!("{context}: pointer {ptr} with length {len} overflows"),
+        })?;
+
+        if end > memory_len {
+            return Err(SwarmError::PluginOperationFailed {
+                name: plugin_name.into(),
+                reason: format!(
+                    "{context}: range {start}..{end} exceeds linear memory size {memory_len}"
+                ),
+            });
+        }
+
+        Ok(start..end)
     }
 }
 
@@ -270,62 +363,98 @@ impl Plugin for WasmPlugin {
         })?;
 
         let params_json = params.to_string();
+        let plugin_name = self.manifest.name.clone();
+        let mut allocations = GuestAllocations::default();
 
-        // Write action name and params into WASM memory.
-        let (action_ptr, action_len) = Self::alloc_and_write(rt, action.as_bytes())?;
-        let (params_ptr, params_len) = Self::alloc_and_write(rt, params_json.as_bytes())?;
+        let result = (|| -> SwarmResult<serde_json::Value> {
+            // Write action name and params into WASM memory.
+            let (action_ptr, action_len) = Self::alloc_and_write(rt, &plugin_name, action.as_bytes())?;
+            allocations.push(action_ptr, action_len);
 
-        // Allocate the result buffer.
-        let result_ptr = Self::alloc_result_buffer(rt)?;
+            let (params_ptr, params_len) =
+                Self::alloc_and_write(rt, &plugin_name, params_json.as_bytes())?;
+            allocations.push(params_ptr, params_len);
 
-        // Call `swarm_invoke`.
-        let ret = rt
-            .fn_invoke
-            .call(
-                &mut rt.store,
-                (
-                    action_ptr,
-                    action_len,
-                    params_ptr,
-                    params_len,
-                    result_ptr,
-                    RESULT_BUFFER_CAPACITY,
-                ),
-            )
-            .map_err(|e| SwarmError::PluginOperationFailed {
-                name: self.manifest.name.clone(),
-                reason: format!("swarm_invoke trap: {e}"),
-            })?;
+            // Allocate the result buffer.
+            let result_ptr = Self::alloc_result_buffer(rt, &plugin_name)?;
+            allocations.push(result_ptr, RESULT_BUFFER_CAPACITY);
 
-        // Free input allocations.
-        Self::dealloc(rt, action_ptr, action_len)?;
-        Self::dealloc(rt, params_ptr, params_len)?;
+            // Call `swarm_invoke`.
+            let ret = rt
+                .fn_invoke
+                .call(
+                    &mut rt.store,
+                    (
+                        action_ptr,
+                        action_len,
+                        params_ptr,
+                        params_len,
+                        result_ptr,
+                        RESULT_BUFFER_CAPACITY,
+                    ),
+                )
+                .map_err(|e| SwarmError::PluginOperationFailed {
+                    name: plugin_name.clone(),
+                    reason: format!("swarm_invoke trap: {e}"),
+                })?;
 
-        // Interpret the return value.
-        let result = if ret >= 0 {
-            // Success: read `ret` bytes of JSON from result buffer.
-            let bytes = Self::read_bytes(rt, result_ptr, ret as usize);
-            Self::dealloc(rt, result_ptr, RESULT_BUFFER_CAPACITY)?;
-            let json: serde_json::Value =
-                serde_json::from_slice(&bytes).map_err(SwarmError::Serialization)?;
-            Ok(json)
-        } else {
-            // Error: read `(-ret)` bytes as an error message.
-            let err_len = (-ret) as usize;
-            let err_msg = if err_len > 0 {
-                let bytes = Self::read_bytes(rt, result_ptr, err_len);
-                String::from_utf8_lossy(&bytes).into_owned()
+            // Interpret the return value.
+            if ret >= 0 {
+                let len = ret as usize;
+                if len > RESULT_BUFFER_CAPACITY as usize {
+                    return Err(SwarmError::PluginOperationFailed {
+                        name: plugin_name.clone(),
+                        reason: format!(
+                            "WASM plugin returned success length {len} exceeding result buffer capacity {}",
+                            RESULT_BUFFER_CAPACITY
+                        ),
+                    });
+                }
+
+                let bytes = Self::read_bytes(rt, &plugin_name, result_ptr, len)?;
+                let json: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(SwarmError::Serialization)?;
+                Ok(json)
             } else {
-                "WASM plugin returned an unspecified error".into()
-            };
-            Self::dealloc(rt, result_ptr, RESULT_BUFFER_CAPACITY)?;
-            Err(SwarmError::PluginOperationFailed {
-                name: self.manifest.name.clone(),
-                reason: err_msg,
-            })
-        };
+                let err_msg = if ret == -1 {
+                    "WASM plugin returned an unspecified error".into()
+                } else {
+                    let err_len = (-ret) as usize;
+                    if err_len > RESULT_BUFFER_CAPACITY as usize {
+                        return Err(SwarmError::PluginOperationFailed {
+                            name: plugin_name.clone(),
+                            reason: format!(
+                                "WASM plugin returned error length {err_len} exceeding result buffer capacity {}",
+                                RESULT_BUFFER_CAPACITY
+                            ),
+                        });
+                    }
 
-        result
+                    let bytes = Self::read_bytes(rt, &plugin_name, result_ptr, err_len)?;
+                    String::from_utf8_lossy(&bytes).into_owned()
+                };
+
+                Err(SwarmError::PluginOperationFailed {
+                    name: plugin_name.clone(),
+                    reason: err_msg,
+                })
+            }
+        })();
+
+        let cleanup_result = allocations.deallocate_all(rt);
+        match (result, cleanup_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Err(cleanup_err)) => Err(cleanup_err),
+            (Err(primary_err), Ok(())) => Err(primary_err),
+            (Err(primary_err), Err(cleanup_err)) => {
+                tracing::warn!(
+                    plugin = %plugin_name,
+                    cleanup_error = %cleanup_err,
+                    "failed to deallocate guest buffers after invoke error"
+                );
+                Err(primary_err)
+            }
+        }
     }
 
     async fn health_check(&self) -> SwarmResult<()> {
@@ -537,6 +666,86 @@ mod tests {
         wat::parse_str(wat).expect("WAT should compile to valid WASM")
     }
 
+    fn invoke_error_no_message_wasm_bytes() -> Vec<u8> {
+        let wat = r#"
+(module
+  (memory (export "memory") 2)
+  (global $heap_ptr (mut i32) (i32.const 65536))
+  (func (export "swarm_alloc") (param $size i32) (result i32)
+    (local $ptr i32)
+    (local.set $ptr (global.get $heap_ptr))
+    (global.set $heap_ptr (i32.add (global.get $heap_ptr) (local.get $size)))
+    (local.get $ptr)
+  )
+  (func (export "swarm_dealloc") (param $ptr i32) (param $len i32))
+  (func (export "swarm_on_load") (result i32) (i32.const 0))
+  (func (export "swarm_on_unload") (result i32) (i32.const 0))
+  (func (export "swarm_health_check") (result i32) (i32.const 0))
+  (func (export "swarm_invoke")
+    (param $ap i32) (param $al i32)
+    (param $pp i32) (param $pl i32)
+    (param $rp i32) (param $rc i32)
+    (result i32)
+    (i32.const -1)
+  )
+)
+"#;
+        wat::parse_str(wat).expect("WAT should compile to valid WASM")
+    }
+
+    fn invoke_error_length_too_large_wasm_bytes() -> Vec<u8> {
+        let wat = format!(
+            r#"
+(module
+  (memory (export "memory") 2)
+  (global $heap_ptr (mut i32) (i32.const 65536))
+  (func (export "swarm_alloc") (param $size i32) (result i32)
+    (local $ptr i32)
+    (local.set $ptr (global.get $heap_ptr))
+    (global.set $heap_ptr (i32.add (global.get $heap_ptr) (local.get $size)))
+    (local.get $ptr)
+  )
+  (func (export "swarm_dealloc") (param $ptr i32) (param $len i32))
+  (func (export "swarm_on_load") (result i32) (i32.const 0))
+  (func (export "swarm_on_unload") (result i32) (i32.const 0))
+  (func (export "swarm_health_check") (result i32) (i32.const 0))
+  (func (export "swarm_invoke")
+    (param $ap i32) (param $al i32)
+    (param $pp i32) (param $pl i32)
+    (param $rp i32) (param $rc i32)
+    (result i32)
+    (i32.const -{})
+  )
+)
+"#,
+            RESULT_BUFFER_CAPACITY + 1
+        );
+        wat::parse_str(&wat).expect("WAT should compile to valid WASM")
+    }
+
+    fn invalid_alloc_pointer_wasm_bytes() -> Vec<u8> {
+        let wat = r#"
+(module
+  (memory (export "memory") 1)
+  (func (export "swarm_alloc") (param $size i32) (result i32)
+    (i32.const 70000)
+  )
+  (func (export "swarm_dealloc") (param $ptr i32) (param $len i32))
+  (func (export "swarm_on_load") (result i32) (i32.const 0))
+  (func (export "swarm_on_unload") (result i32) (i32.const 0))
+  (func (export "swarm_health_check") (result i32) (i32.const 0))
+  (func (export "swarm_invoke")
+    (param $ap i32) (param $al i32)
+    (param $pp i32) (param $pl i32)
+    (param $rp i32) (param $rc i32)
+    (result i32)
+    (i32.const 0)
+  )
+)
+"#;
+        wat::parse_str(wat).expect("WAT should compile to valid WASM")
+    }
+
     fn test_manifest() -> PluginManifest {
         PluginManifest::new("test-wasm", "0.1.0", "tests", "WASM integration test plugin")
     }
@@ -607,6 +816,57 @@ mod tests {
             .expect("compile");
         let result = plugin.invoke("echo", serde_json::json!({})).await;
         assert!(result.is_err(), "invoke before on_load should fail");
+    }
+
+    #[tokio::test]
+    async fn invoke_error_without_message_uses_unspecified_error_text() {
+        let bytes = invoke_error_no_message_wasm_bytes();
+        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
+            .expect("compile");
+        plugin.on_load().await.expect("on_load");
+
+        let err = plugin
+            .invoke("echo", serde_json::json!({"message": "hello"}))
+            .await
+            .expect_err("invoke should fail");
+        assert!(
+            err.to_string().contains("WASM plugin returned an unspecified error"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_rejects_error_length_exceeding_result_buffer_capacity() {
+        let bytes = invoke_error_length_too_large_wasm_bytes();
+        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
+            .expect("compile");
+        plugin.on_load().await.expect("on_load");
+
+        let err = plugin
+            .invoke("echo", serde_json::json!({"message": "hello"}))
+            .await
+            .expect_err("invoke should fail");
+        assert!(
+            err.to_string().contains("exceeding result buffer capacity"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_rejects_out_of_bounds_allocator_pointer() {
+        let bytes = invalid_alloc_pointer_wasm_bytes();
+        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
+            .expect("compile");
+        plugin.on_load().await.expect("on_load");
+
+        let err = plugin
+            .invoke("echo", serde_json::json!({"message": "hello"}))
+            .await
+            .expect_err("invoke should fail");
+        assert!(
+            err.to_string().contains("out-of-bounds pointer"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
