@@ -14,7 +14,7 @@ platforms).
 
 - **Hierarchical agent management** — Executive → Manager → Worker supervision trees
 - **Priority-based task scheduling** — capability-matching, least-loaded dispatch
-- **Policy engine** — deny-by-default RBAC, allow/deny policies, admission control
+- **Policy engine** — deny-by-default RBAC and allow/deny policy primitives for embedding applications
 - **Plugin SDK** — first-class plugin system with lifecycle management
 - **Fault tolerance** — circuit breakers, configurable retry with exponential backoff
 - **Observability** — structured tracing, metrics counters, audit logger

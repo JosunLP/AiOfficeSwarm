@@ -81,7 +81,7 @@ impl WasmPermission {
     /// file_write:/tmp/cache
     /// custom:my-permission
     /// ```
-    pub fn as_str(&self) -> String {
+    pub fn compact_string(&self) -> String {
         match self {
             WasmPermission::Network(v) => format!("network:{v}"),
             WasmPermission::EnvVar(v) => format!("env_var:{v}"),
@@ -89,6 +89,12 @@ impl WasmPermission {
             WasmPermission::FileWrite(v) => format!("file_write:{v}"),
             WasmPermission::Custom(v) => format!("custom:{v}"),
         }
+    }
+}
+
+impl std::fmt::Display for WasmPermission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.compact_string())
     }
 }
 
@@ -163,11 +169,12 @@ mod tests {
 
     #[test]
     fn wasm_permission_as_str() {
-        assert_eq!(WasmPermission::Network("api.test.com:443".into()).as_str(), "network:api.test.com:443");
-        assert_eq!(WasmPermission::EnvVar("MY_KEY".into()).as_str(), "env_var:MY_KEY");
-        assert_eq!(WasmPermission::FileRead("/etc/ssl".into()).as_str(), "file_read:/etc/ssl");
-        assert_eq!(WasmPermission::FileWrite("/tmp".into()).as_str(), "file_write:/tmp");
-        assert_eq!(WasmPermission::Custom("special".into()).as_str(), "custom:special");
+        assert_eq!(WasmPermission::Network("api.test.com:443".into()).compact_string(), "network:api.test.com:443");
+        assert_eq!(WasmPermission::EnvVar("MY_KEY".into()).compact_string(), "env_var:MY_KEY");
+        assert_eq!(WasmPermission::FileRead("/etc/ssl".into()).compact_string(), "file_read:/etc/ssl");
+        assert_eq!(WasmPermission::FileWrite("/tmp".into()).compact_string(), "file_write:/tmp");
+        assert_eq!(WasmPermission::Custom("special".into()).compact_string(), "custom:special");
+        assert_eq!(WasmPermission::Custom("special".into()).to_string(), "custom:special");
     }
 
     #[test]

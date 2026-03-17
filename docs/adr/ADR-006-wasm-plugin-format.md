@@ -29,8 +29,9 @@ format alongside native Rust plugins.
 - **Security**: WASM modules run in a sandboxed address space; they cannot
   access host memory outside their linear memory region.
 - **Explicit permissions**: `WasmPermission` in the manifest declares all
-  OS-level capabilities (network, filesystem, env vars). The host can enforce
-  these before instantiation.
+  OS-level capabilities (network, filesystem, env vars). In the current
+  milestone these are declarative metadata for inspection and future
+  enforcement; the host does not yet enforce them before instantiation.
 - **Forward compatibility**: the ABI is versioned via `min_host_version` in
   the manifest.
 

@@ -12,8 +12,10 @@
 //!   [`ActionAllowlistPolicy`].
 //!
 //! ## Integration
-//! The orchestrator invokes the policy engine before performing sensitive
+//! Embedding applications can invoke the policy engine around sensitive
 //! operations (task scheduling, plugin invocation, agent creation, etc.).
+//! The current `swarm-orchestrator` crate does not wire these checks in
+//! automatically.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::all)]

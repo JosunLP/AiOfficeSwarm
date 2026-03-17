@@ -8,7 +8,7 @@
 //! 4. Submitting tasks and dispatching them.
 //! 5. Collecting results.
 //! 6. Loading and invoking a plugin.
-//! 7. Using the policy engine for admission control.
+//! 7. Configuring the policy engine for application-managed admission control.
 
 use std::sync::Arc;
 
