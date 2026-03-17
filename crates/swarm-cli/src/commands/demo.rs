@@ -20,6 +20,15 @@ use swarm_orchestrator::Orchestrator;
 use swarm_runtime::TaskRunner;
 use swarm_telemetry::Metrics;
 
+fn orchestrator_config_from_swarm(
+    config: &swarm_config::model::OrchestratorConfig,
+) -> swarm_orchestrator::OrchestratorConfig {
+    swarm_orchestrator::OrchestratorConfig {
+        event_channel_capacity: config.event_channel_capacity,
+        max_dispatch_per_tick: config.max_dispatch_per_tick,
+    }
+}
+
 /// Demo command arguments.
 #[derive(Args)]
 pub struct DemoArgs {
@@ -63,11 +72,11 @@ impl Agent for EchoWorker {
 
 // ─── Demo runner ──────────────────────────────────────────────────────────────
 
-pub async fn run(args: DemoArgs, _config: &SwarmConfig) -> anyhow::Result<()> {
+pub async fn run(args: DemoArgs, config: &SwarmConfig) -> anyhow::Result<()> {
     println!("=== AiOfficeSwarm Demo ===");
     println!("Starting a demo swarm with 2 worker agents...\n");
 
-    let orch = Orchestrator::new();
+    let orch = Orchestrator::with_config(orchestrator_config_from_swarm(&config.orchestrator));
     let handle = orch.handle();
     let metrics = Metrics::new();
 
@@ -159,4 +168,22 @@ pub async fn run(args: DemoArgs, _config: &SwarmConfig) -> anyhow::Result<()> {
     println!("  Agents active:    {}", snap.agents_registered);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::orchestrator_config_from_swarm;
+    use swarm_config::SwarmConfig;
+
+    #[test]
+    fn demo_uses_loaded_orchestrator_config() {
+        let mut config = SwarmConfig::default();
+        config.orchestrator.event_channel_capacity = 32;
+        config.orchestrator.max_dispatch_per_tick = 7;
+
+        let orchestrator_config = orchestrator_config_from_swarm(&config.orchestrator);
+
+        assert_eq!(orchestrator_config.event_channel_capacity, 32);
+        assert_eq!(orchestrator_config.max_dispatch_per_tick, 7);
+    }
 }

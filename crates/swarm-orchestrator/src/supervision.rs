@@ -12,7 +12,7 @@
 //! or halt the affected workflow.
 
 use dashmap::DashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use swarm_core::{
     agent::SupervisionTree,
@@ -26,6 +26,7 @@ use swarm_core::{
 #[derive(Clone, Default)]
 pub struct SupervisionManager {
     nodes: Arc<DashMap<AgentId, SupervisionTree>>,
+    mutation_lock: Arc<Mutex<()>>,
 }
 
 impl SupervisionManager {
@@ -34,8 +35,15 @@ impl SupervisionManager {
         Self::default()
     }
 
+    fn lock_mutation(&self) -> MutexGuard<'_, ()> {
+        self.mutation_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Register an agent as a root node (no supervisor).
     pub fn register_root(&self, agent_id: AgentId) {
+        let _guard = self.lock_mutation();
         self.nodes
             .insert(agent_id, SupervisionTree::root(agent_id));
     }
@@ -50,6 +58,8 @@ impl SupervisionManager {
         agent_id: AgentId,
         supervisor_id: AgentId,
     ) -> SwarmResult<()> {
+        let _guard = self.lock_mutation();
+
         if agent_id == supervisor_id {
             return Err(SwarmError::Internal {
                 reason: format!("agent {} cannot supervise itself", agent_id),
@@ -67,31 +77,39 @@ impl SupervisionManager {
 
         if let Some(old_supervisor_id) = previous_supervisor {
             if old_supervisor_id != supervisor_id {
-                if let Some(mut old_supervisor_node) = self.nodes.get_mut(&old_supervisor_id) {
-                    old_supervisor_node.subordinates.retain(|id| id != &agent_id);
-                } else {
-                    tracing::warn!(
-                        agent_id = %agent_id,
-                        old_supervisor_id = %old_supervisor_id,
-                        "agent had a missing previous supervisor while being re-parented"
-                    );
-                }
+                let mut old_supervisor_node = self
+                    .nodes
+                    .get_mut(&old_supervisor_id)
+                    .ok_or_else(|| SwarmError::Internal {
+                        reason: format!(
+                            "agent {} had missing previous supervisor {} while being re-parented",
+                            agent_id, old_supervisor_id
+                        ),
+                    })?;
+                old_supervisor_node.subordinates.retain(|id| id != &agent_id);
             }
         }
 
-        if let Some(mut agent_node) = self.nodes.get_mut(&agent_id) {
-            agent_node.supervisor = Some(supervisor_id);
-        }
+        let mut agent_node = self
+            .nodes
+            .get_mut(&agent_id)
+            .ok_or(SwarmError::AgentNotFound { id: agent_id })?;
+        agent_node.supervisor = Some(supervisor_id);
+        drop(agent_node);
 
-        if let Some(mut supervisor_node) = self.nodes.get_mut(&supervisor_id) {
-            supervisor_node.add_subordinate(agent_id);
-        }
+        let mut supervisor_node = self
+            .nodes
+            .get_mut(&supervisor_id)
+            .ok_or(SwarmError::AgentNotFound { id: supervisor_id })?;
+        supervisor_node.add_subordinate(agent_id);
 
         Ok(())
     }
 
     /// Remove an agent from the supervision tree.
     pub fn deregister(&self, agent_id: &AgentId) {
+        let _guard = self.lock_mutation();
+
         if let Some((_, node)) = self.nodes.remove(agent_id) {
             // Remove this agent from its supervisor's subordinate list.
             if let Some(supervisor_id) = node.supervisor {
