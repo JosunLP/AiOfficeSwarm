@@ -6,7 +6,7 @@
 //! If all policies `Abstain`, the engine applies a configurable default
 //! decision.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 
 use swarm_core::{
@@ -36,12 +36,25 @@ pub struct PolicyEngine {
 }
 
 impl PolicyEngine {
+    fn default_deny_policy_id() -> PolicyId {
+        static DEFAULT_DENY_POLICY_ID: OnceLock<PolicyId> = OnceLock::new();
+
+        *DEFAULT_DENY_POLICY_ID.get_or_init(|| {
+            // Fixed across processes so deny-by-default audit/log events remain
+            // correlatable even when no user-defined policy supplied the denial.
+            // The `d3f1` suffix is a mnemonic for the default-deny fallback.
+            "00000000-0000-0000-0000-00000000d3f1"
+                .parse()
+                .expect("default deny policy ID must be a valid UUID")
+        })
+    }
+
     /// Create a new engine with the given default decision.
     pub fn new(default_decision: DefaultDecision) -> Self {
         Self {
             policies: Arc::new(RwLock::new(Vec::new())),
             default_decision,
-            default_deny_policy_id: PolicyId::new(),
+            default_deny_policy_id: Self::default_deny_policy_id(),
         }
     }
 
@@ -187,6 +200,30 @@ mod tests {
             PolicyDecision::Allowed => panic!("expected deny-by-default to deny"),
         };
         assert_eq!(first, second);
+        assert_eq!(
+            first,
+            "00000000-0000-0000-0000-00000000d3f1"
+                .parse()
+                .expect("test UUID should parse")
+        );
+    }
+
+    #[tokio::test]
+    async fn deny_by_default_uses_same_policy_id_across_engines() {
+        let first = PolicyEngine::deny_by_default();
+        let second = PolicyEngine::deny_by_default();
+        let ctx = PolicyContext::new("create_task", "agent-1", "task-queue");
+
+        let first_id = match first.evaluate(&ctx).await.unwrap() {
+            PolicyDecision::Denied { policy_id, .. } => policy_id,
+            PolicyDecision::Allowed => panic!("expected deny-by-default to deny"),
+        };
+        let second_id = match second.evaluate(&ctx).await.unwrap() {
+            PolicyDecision::Denied { policy_id, .. } => policy_id,
+            PolicyDecision::Allowed => panic!("expected deny-by-default to deny"),
+        };
+
+        assert_eq!(first_id, second_id);
     }
 
     #[tokio::test]

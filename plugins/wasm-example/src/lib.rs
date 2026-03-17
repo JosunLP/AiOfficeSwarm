@@ -59,6 +59,40 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
+const BUFFER_TOO_SMALL_ERROR_MSG: &[u8] = b"Result buffer too small";
+
+fn write_success(result_buf: &mut [u8], bytes: &[u8]) -> Option<i32> {
+    if bytes.len() > result_buf.len() {
+        return None;
+    }
+
+    result_buf[..bytes.len()].copy_from_slice(bytes);
+    Some(bytes.len() as i32)
+}
+
+fn write_error(result_buf: &mut [u8], bytes: &[u8]) -> i32 {
+    // -1 represents an error with no message, including empty-message cases.
+    if bytes.is_empty() || bytes.len() > result_buf.len() {
+        return -1;
+    }
+
+    result_buf[..bytes.len()].copy_from_slice(bytes);
+    -(bytes.len() as i32)
+}
+
+fn write_error_with_fallback(result_buf: &mut [u8], bytes: &[u8]) -> i32 {
+    if bytes.is_empty() {
+        return -1;
+    }
+
+    let rc = write_error(result_buf, bytes);
+    if rc != -1 {
+        return rc;
+    }
+
+    write_error(result_buf, BUFFER_TOO_SMALL_ERROR_MSG)
+}
+
 // ─── WASM ABI exports ─────────────────────────────────────────────────────────
 
 /// Allocate `size` bytes and return a pointer.
@@ -133,23 +167,18 @@ pub unsafe extern "C" fn swarm_invoke(
     match action {
         "echo" => {
             // Return the params JSON unchanged.
-            let n = params_bytes.len().min(result_cap);
-            result_buf[..n].copy_from_slice(&params_bytes[..n]);
-            n as i32
+            write_success(result_buf, params_bytes)
+                .unwrap_or_else(|| write_error(result_buf, BUFFER_TOO_SMALL_ERROR_MSG))
         }
         "ping" => {
             let response = b"{\"pong\":true}";
-            let n = response.len().min(result_cap);
-            result_buf[..n].copy_from_slice(&response[..n]);
-            n as i32
+            write_success(result_buf, response)
+                .unwrap_or_else(|| write_error(result_buf, BUFFER_TOO_SMALL_ERROR_MSG))
         }
         other => {
             // Write error message and return negative length.
             let msg = alloc::format!("unknown action: '{}'", other);
-            let bytes = msg.as_bytes();
-            let n = bytes.len().min(result_cap);
-            result_buf[..n].copy_from_slice(&bytes[..n]);
-            if n == 0 { -1 } else { -(n as i32) }
+            write_error_with_fallback(result_buf, msg.as_bytes())
         }
     }
 }
