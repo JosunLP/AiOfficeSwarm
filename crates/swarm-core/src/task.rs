@@ -43,6 +43,9 @@ pub struct TaskSpec {
 
 impl TaskSpec {
     /// Create a minimal task specification with sensible defaults.
+    ///
+    /// By default this applies a five-minute timeout. Callers that want no
+    /// deadline can explicitly set [`TaskSpec::timeout`] to `None`.
     pub fn new(name: impl Into<String>, input: serde_json::Value) -> Self {
         Self {
             name: name.into(),

@@ -282,5 +282,5 @@ Subscribe via `OrchestratorHandle::subscribe()`.
 | v0.3 | Webhook/trigger plugins (schedule, HTTP, event-driven) |
 | v0.4 | Distributed orchestrator (Raft-based consensus, multi-node) |
 | v0.4 | OpenTelemetry metrics export (Prometheus, OTLP) |
-| v0.5 | Dynamic plugin loading (shared library / WASM) |
+| v0.5 | Dynamic shared-library plugin loading; WASM permission enforcement hooks |
 | v0.5 | Agent hot-restart and graceful drain |
