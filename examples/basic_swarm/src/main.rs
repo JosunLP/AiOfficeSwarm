@@ -32,6 +32,15 @@ use swarm_telemetry::{init_tracing, Metrics};
 
 // ─── Custom Agent Implementation ─────────────────────────────────────────────
 
+fn orchestrator_config_from_swarm(
+    config: &swarm_config::model::OrchestratorConfig,
+) -> swarm_orchestrator::OrchestratorConfig {
+    swarm_orchestrator::OrchestratorConfig {
+        event_channel_capacity: config.event_channel_capacity,
+        max_dispatch_per_tick: config.max_dispatch_per_tick,
+    }
+}
+
 /// A simple agent that processes text tasks.
 struct TextProcessingAgent {
     descriptor: AgentDescriptor,
@@ -187,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
     println!("╚═══════════════════════════════════════════════╝\n");
 
     // 2. Create the orchestrator.
-    let orch = Orchestrator::new();
+    let orch = Orchestrator::with_config(orchestrator_config_from_swarm(&config.orchestrator));
     let handle = orch.handle();
     let metrics = Metrics::new();
 

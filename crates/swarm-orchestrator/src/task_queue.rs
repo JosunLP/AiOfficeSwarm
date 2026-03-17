@@ -71,6 +71,11 @@ impl TaskQueue {
         let priority_key = -(task.spec.priority as i32);
         let enqueued_at = swarm_core::types::now();
         let mut inner = self.lock_inner();
+        if inner.index.contains_key(&task.id) {
+            return Err(SwarmError::InvalidTaskSpec {
+                reason: format!("task {} is already enqueued", task.id),
+            });
+        }
         let sequence = inner.next_sequence;
         inner.next_sequence += 1;
         let key = (priority_key, enqueued_at, sequence);
@@ -179,6 +184,23 @@ mod tests {
         queue.enqueue(make_task(TaskPriority::Normal)).unwrap();
         queue.enqueue(make_task(TaskPriority::High)).unwrap();
         assert_eq!(queue.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_task_id_is_rejected_without_mutating_queue() {
+        let queue = TaskQueue::new();
+        let task = make_task(TaskPriority::Normal);
+        let duplicate = task.clone();
+        let id = task.id;
+
+        queue.enqueue(task).unwrap();
+        let err = queue.enqueue(duplicate).expect_err("duplicate task ID should be rejected");
+
+        assert!(matches!(err, SwarmError::InvalidTaskSpec { .. }));
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.peek().unwrap().id, id);
+        assert_eq!(queue.dequeue().unwrap().id, id);
+        assert!(queue.is_empty());
     }
 
     #[test]
