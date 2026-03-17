@@ -47,6 +47,19 @@ impl PluginHost {
         let id = manifest.id;
         let name = manifest.name.clone();
 
+        if let Some(existing) = self.registry.get(&id) {
+            match existing.state {
+                PluginState::Failed { .. } => {
+                    self.registry.deregister(&id)?;
+                }
+                _ => {
+                    return Err(SwarmError::Internal {
+                        reason: format!("plugin {} is already registered", id),
+                    });
+                }
+            }
+        }
+
         self.registry.register(manifest)?;
         self.registry.update_state(&id, PluginState::Loading)?;
 
@@ -68,7 +81,6 @@ impl PluginHost {
                         failed_at: Utc::now(),
                     },
                 )?;
-                self.registry.deregister(&id)?;
                 tracing::error!(plugin_id = %id, name = %name, reason = %reason, "Plugin failed to load");
                 Err(SwarmError::PluginInitFailed { name, reason })
             }
@@ -176,6 +188,12 @@ mod tests {
             manifest.capabilities.push(PluginCapabilityKind::ActionProvider);
             Self { manifest }
         }
+
+        fn new_with_id(id: PluginId) -> Self {
+            let mut plugin = Self::new();
+            plugin.manifest.id = id;
+            plugin
+        }
     }
 
     impl FailingLoadPlugin {
@@ -184,6 +202,12 @@ mod tests {
                 PluginManifest::new("failing-load", "1.0.0", "test", "Fails during load");
             manifest.capabilities.push(PluginCapabilityKind::ActionProvider);
             Self { manifest }
+        }
+
+        fn new_with_id(id: PluginId) -> Self {
+            let mut plugin = Self::new();
+            plugin.manifest.id = id;
+            plugin
         }
     }
 
@@ -231,7 +255,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_load_deregisters_plugin_record() {
+    async fn failed_load_keeps_failed_plugin_record() {
         let host = PluginHost::new();
         let plugin = FailingLoadPlugin::new();
         let plugin_id = plugin.manifest.id;
@@ -239,6 +263,29 @@ mod tests {
         let result = host.load(Box::new(plugin)).await;
 
         assert!(matches!(result, Err(SwarmError::PluginInitFailed { .. })));
-        assert!(host.registry().get(&plugin_id).is_none());
+        let record = host.registry().get(&plugin_id).expect("failed load should remain visible");
+        assert_eq!(record.state.label(), "failed");
+        assert!(host.registry().active_plugins().is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_load_can_be_retried_with_same_plugin_id() {
+        let host = PluginHost::new();
+        let plugin_id = PluginId::new();
+
+        let first_result = host
+            .load(Box::new(FailingLoadPlugin::new_with_id(plugin_id)))
+            .await;
+        assert!(matches!(first_result, Err(SwarmError::PluginInitFailed { .. })));
+
+        let second_result = host
+            .load(Box::new(EchoPlugin::new_with_id(plugin_id)))
+            .await;
+
+        assert_eq!(second_result.unwrap(), plugin_id);
+        assert_eq!(
+            host.registry().get(&plugin_id).expect("plugin should be reloaded").state.label(),
+            "active"
+        );
     }
 }

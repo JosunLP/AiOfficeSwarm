@@ -2,8 +2,8 @@
 //! declared capabilities.
 //!
 //! The manifest is the first thing the host reads when loading a plugin.
-//! It is used for version compatibility checks, capability discovery,
-//! and permission metadata inspection.
+//! It is used for capability discovery, permission metadata inspection,
+//! and embedding-application-managed compatibility checks.
 //!
 //! ## Manifest types
 //! - [`PluginManifest`] – in-memory manifest used by the host at runtime.

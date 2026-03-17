@@ -21,6 +21,7 @@ use swarm_core::{
     agent::{Agent, AgentDescriptor, AgentKind},
     capability::{Capability, CapabilitySet},
     error::SwarmResult,
+    policy::PolicyContext,
     task::{Task, TaskPriority, TaskSpec, TaskStatus},
 };
 use swarm_orchestrator::Orchestrator;
@@ -214,6 +215,9 @@ async fn main() -> anyhow::Result<()> {
         c.add(Capability::new("text-processing"));
         c
     };
+    policy_engine
+        .enforce(&PolicyContext::new("submit_task", "basic_swarm", "task-queue"))
+        .await?;
     let _task1_id = handle.submit_task(text_spec)?;
     metrics.inc_tasks_submitted();
     println!("  ✓ Submitted: summarize-report (High priority)");
@@ -227,10 +231,16 @@ async fn main() -> anyhow::Result<()> {
         c.add(Capability::new("data-analysis"));
         c
     };
+    policy_engine
+        .enforce(&PolicyContext::new("submit_task", "basic_swarm", "task-queue"))
+        .await?;
     let _task2_id = handle.submit_task(data_spec)?;
     metrics.inc_tasks_submitted();
     println!("  ✓ Submitted: analyze-sales (Normal priority)");
 
+    policy_engine
+        .enforce(&PolicyContext::new("submit_task", "basic_swarm", "task-queue"))
+        .await?;
     let _task3_id = handle.submit_task(TaskSpec::new(
         "summarize-meeting-notes",
         json!({ "text": "Team standup: sprint velocity is on track, two blockers identified in the backend integration module." }),
@@ -257,8 +267,14 @@ async fn main() -> anyhow::Result<()> {
     if let Some(task_id) = handle.try_schedule_next()? {
         let task = handle.get_task(&task_id)?;
         let output = data_runner.run_task(task).await?;
+        let mean = output["mean"]
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("expected numeric mean in analyze-sales output"))?;
+        let max = output["max"]
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("expected numeric max in analyze-sales output"))?;
         metrics.inc_tasks_completed();
-        println!("  ✓ analyze-sales    → mean={:.2}, max={:.2}", output["mean"], output["max"]);
+        println!("  ✓ analyze-sales    → mean={mean:.2}, max={max:.2}");
     }
 
     // Mark agents ready again for task 3.
@@ -287,6 +303,13 @@ async fn main() -> anyhow::Result<()> {
         .load(Box::new(example_integration::NotificationPlugin::new("#ops-alerts")))
         .await?;
 
+    policy_engine
+        .enforce(&PolicyContext::new(
+            "invoke_plugin",
+            "basic_swarm",
+            plugin_id.to_string(),
+        ))
+        .await?;
     let result = plugin_host
         .invoke(
             &plugin_id,
