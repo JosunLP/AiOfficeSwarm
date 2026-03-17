@@ -188,12 +188,6 @@ mod tests {
             manifest.capabilities.push(PluginCapabilityKind::ActionProvider);
             Self { manifest }
         }
-
-        fn new_with_id(id: PluginId) -> Self {
-            let mut plugin = Self::new();
-            plugin.manifest.id = id;
-            plugin
-        }
     }
 
     impl FailingLoadPlugin {
@@ -202,12 +196,6 @@ mod tests {
                 PluginManifest::new("failing-load", "1.0.0", "test", "Fails during load");
             manifest.capabilities.push(PluginCapabilityKind::ActionProvider);
             Self { manifest }
-        }
-
-        fn new_with_id(id: PluginId) -> Self {
-            let mut plugin = Self::new();
-            plugin.manifest.id = id;
-            plugin
         }
     }
 
@@ -273,14 +261,14 @@ mod tests {
         let host = PluginHost::new();
         let plugin_id = PluginId::new();
 
-        let first_result = host
-            .load(Box::new(FailingLoadPlugin::new_with_id(plugin_id)))
-            .await;
+        let mut failing_plugin = FailingLoadPlugin::new();
+        failing_plugin.manifest.id = plugin_id;
+        let first_result = host.load(Box::new(failing_plugin)).await;
         assert!(matches!(first_result, Err(SwarmError::PluginInitFailed { .. })));
 
-        let second_result = host
-            .load(Box::new(EchoPlugin::new_with_id(plugin_id)))
-            .await;
+        let mut echo_plugin = EchoPlugin::new();
+        echo_plugin.manifest.id = plugin_id;
+        let second_result = host.load(Box::new(echo_plugin)).await;
 
         assert_eq!(second_result.unwrap(), plugin_id);
         assert_eq!(
