@@ -138,7 +138,7 @@ impl OrchestratorHandle {
             agent_id: id,
             name: descriptor.name.clone(),
         });
-        tracing::info!(agent_id = %id, name = descriptor.name, "Agent registered");
+        tracing::info!(agent_id = %id, name = %descriptor.name, "Agent registered");
         Ok(id)
     }
 
@@ -197,7 +197,7 @@ impl OrchestratorHandle {
             task_id,
             name: task.spec.name.clone(),
         });
-        tracing::info!(task_id = %task_id, name = task.spec.name, "Task submitted");
+        tracing::info!(task_id = %task_id, name = %task.spec.name, "Task submitted");
         Ok(task_id)
     }
 

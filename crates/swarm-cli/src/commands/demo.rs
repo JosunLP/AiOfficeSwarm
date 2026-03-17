@@ -53,7 +53,7 @@ impl Agent for EchoWorker {
     async fn execute(&mut self, task: Task) -> SwarmResult<serde_json::Value> {
         tracing::info!(
             agent = %self.descriptor.name,
-            task = task.spec.name,
+            task = %task.spec.name,
             "EchoWorker executing task"
         );
         // Simulate a small amount of work.
