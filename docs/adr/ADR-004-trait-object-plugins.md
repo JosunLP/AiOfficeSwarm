@@ -12,13 +12,13 @@ requiring recompilation of the host framework.
 
 Plugins are represented as `Box<dyn Plugin>` trait objects. The `Plugin` trait
 is the only contract between host and plugin. Plugins are stored as
-`Arc<Mutex<Box<dyn Plugin>>>` for thread safety.
+`Arc<tokio::sync::Mutex<Box<dyn Plugin>>>` for async-safe access.
 
 ## Rationale
 
 - Zero coupling: plugin crates only depend on `swarm-plugin` and `swarm-core`.
 - Runtime polymorphism allows heterogeneous plugin collections.
-- `Arc<Mutex<...>>` ensures safe concurrent access.
+- `Arc<tokio::sync::Mutex<...>>` ensures safe concurrent access in async code.
 
 ## Consequences
 

@@ -2,8 +2,8 @@
 //!
 //! This is a minimal, self-contained plugin that demonstrates how to
 //! implement the AiOfficeSwarm WASM ABI. It exports the six required functions
-//! plus linear memory so the host ([`swarm_plugin::wasm_loader::WasmPlugin`])
-//! can drive it through its lifecycle.
+//! plus linear memory so the host-side WASM loader can drive it through its
+//! lifecycle.
 //!
 //! ## Building
 //!

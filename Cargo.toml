@@ -11,6 +11,7 @@ members = [
     "plugins/example-integration",
     "examples/basic_swarm",
 ]
+exclude = ["plugins/wasm-example"]
 resolver = "2"
 
 [workspace.package]
