@@ -172,7 +172,9 @@ pub trait Agent: Send + Sync {
     /// Execute a task and return its output.
     ///
     /// This is the core method of the [`Agent`] trait. Implementations should
-    /// be async and respect the timeout in `task.spec.timeout` if set.
+    /// be async and perform the requested work. The runtime enforces
+    /// `task.spec.timeout` when one is configured, so agents do not need to
+    /// implement their own top-level timeout handling.
     async fn execute(&mut self, task: Task) -> SwarmResult<serde_json::Value>;
 
     /// Perform a health check and return `Ok(())` if the agent is healthy.

@@ -98,10 +98,15 @@ fn write_error_with_fallback(result_buf: &mut [u8], bytes: &[u8]) -> i32 {
 /// Allocate `size` bytes and return a pointer.
 ///
 /// The host calls this before writing input data into WASM linear memory.
+/// Allocation failure traps instead of returning a null pointer into the ABI.
 #[no_mangle]
 pub unsafe extern "C" fn swarm_alloc(size: usize) -> *mut u8 {
     let layout = core::alloc::Layout::from_size_align(size, 1).unwrap();
-    alloc::alloc::alloc(layout)
+    let ptr = alloc::alloc::alloc(layout);
+    if ptr.is_null() {
+        core::arch::wasm32::unreachable()
+    }
+    ptr
 }
 
 /// Free `len` bytes at `ptr`.
