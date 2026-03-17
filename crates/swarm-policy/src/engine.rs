@@ -63,7 +63,7 @@ impl PolicyEngine {
         Self::new(DefaultDecision::Deny)
     }
 
-    /// Create a new engine with a **allow-by-default** posture.
+    /// Create a new engine with an **allow-by-default** posture.
     ///
     /// Use only for development or when all policies are explicitly configured.
     pub fn allow_by_default() -> Self {

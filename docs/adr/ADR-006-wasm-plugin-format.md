@@ -51,9 +51,9 @@ minimal binary without WASM support can disable it with
 - `wasmtime` (~10 MB compiled) is added as a default dependency of
   `swarm-plugin`.
 - WASM plugin authors must target `wasm32-unknown-unknown` or `wasm32-wasi`.
-- The bump-allocator pattern shown in the example is sufficient for most
-  plugins; production plugins should use a proper allocator (e.g., `wee_alloc`
-  or the standard global allocator via `wasm32-wasi`).
+- The example uses `wee_alloc`, which is sufficient for most plugins;
+  production plugins should continue using an appropriate allocator (e.g.,
+  `wee_alloc` or the standard global allocator via `wasm32-wasi`).
 - Dynamic sandboxing (network filtering, filesystem isolation) is the host
   operator's responsibility in the initial version; enforcement hooks are
   reserved for a future milestone.

@@ -16,7 +16,10 @@
 //!   failure re-opens it and resets the timeout.
 
 use chrono::{DateTime, Utc};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    sync::{Arc, Mutex, MutexGuard},
+    time::{Duration, Instant},
+};
 use swarm_core::error::{SwarmError, SwarmResult};
 
 /// The current state of a circuit breaker.
@@ -60,6 +63,7 @@ struct CircuitBreakerInner {
     state: CircuitState,
     consecutive_failures: u32,
     config: CircuitBreakerConfig,
+    retry_deadline: Option<Instant>,
 }
 
 /// A thread-safe circuit breaker.
@@ -87,6 +91,7 @@ impl CircuitBreaker {
                 state: CircuitState::Closed,
                 consecutive_failures: 0,
                 config,
+                retry_deadline: None,
             })),
         }
     }
@@ -122,23 +127,26 @@ impl CircuitBreaker {
     /// and allows the probe call.
     pub fn acquire(&self) -> SwarmResult<()> {
         let mut inner = self.lock_inner();
-        match &inner.state {
+        let open_deadline_elapsed = inner
+            .retry_deadline
+            .map(|deadline| Instant::now() >= deadline)
+            // Only open circuits carry a retry deadline; closed/half-open
+            // states leave this unset because no deadline check is needed.
+            .unwrap_or(true);
+        let mut transition_to_half_open = false;
+
+        let result = match &inner.state {
             CircuitState::Closed => Ok(()),
             CircuitState::HalfOpen { probe_in_flight: false } => {
-                inner.state = CircuitState::HalfOpen {
-                    probe_in_flight: true,
-                };
+                transition_to_half_open = true;
                 Ok(())
             }
             CircuitState::HalfOpen { probe_in_flight: true } => Err(SwarmError::Internal {
                 reason: format!("circuit '{}' is half-open; probe already in flight", self.name),
             }),
             CircuitState::Open { retry_after, .. } => {
-                if Utc::now() >= *retry_after {
-                    tracing::info!(circuit = %self.name, "Circuit transitioning to HalfOpen");
-                    inner.state = CircuitState::HalfOpen {
-                        probe_in_flight: true,
-                    };
+                if open_deadline_elapsed {
+                    transition_to_half_open = true;
                     Ok(())
                 } else {
                     Err(SwarmError::Internal {
@@ -149,7 +157,17 @@ impl CircuitBreaker {
                     })
                 }
             }
+        };
+
+        if transition_to_half_open {
+            tracing::info!(circuit = %self.name, "Circuit transitioning to HalfOpen");
+            inner.state = CircuitState::HalfOpen {
+                probe_in_flight: true,
+            };
+            inner.retry_deadline = None;
         }
+
+        result
     }
 
     /// Record a successful call. Transitions `HalfOpen` → `Closed` and
@@ -161,6 +179,7 @@ impl CircuitBreaker {
         }
         inner.state = CircuitState::Closed;
         inner.consecutive_failures = 0;
+        inner.retry_deadline = None;
     }
 
     /// Record a failed call. May transition `Closed` → `Open` or
@@ -177,12 +196,14 @@ impl CircuitBreaker {
             let opened_at = Utc::now();
             let retry_after = opened_at
                 + chrono::Duration::seconds(inner.config.open_duration_secs as i64);
+            let retry_deadline = Instant::now() + Duration::from_secs(inner.config.open_duration_secs);
             tracing::warn!(
                 circuit = %self.name,
                 failures = inner.consecutive_failures,
                 "Circuit opened due to repeated failures"
             );
             inner.state = CircuitState::Open { opened_at, retry_after };
+            inner.retry_deadline = Some(retry_deadline);
         }
     }
 }

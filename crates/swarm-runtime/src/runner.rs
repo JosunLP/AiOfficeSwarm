@@ -10,8 +10,6 @@
 //! 4. Reports the outcome (success or failure) back to the orchestrator.
 //! 5. Updates the circuit breaker.
 
-use std::time::Duration;
-
 use swarm_core::{
     agent::Agent,
     error::{SwarmError, SwarmResult},
@@ -79,26 +77,21 @@ impl TaskRunner {
             return Err(start_err);
         }
 
-        // Determine timeout from the task spec.
-        let timeout = task.spec.timeout.unwrap_or(Duration::from_secs(300));
+        match task.spec.timeout {
+            Some(timeout) => self.execute_with_timeout(task_id, agent_id, task, timeout).await,
+            None => self.execute_without_timeout(task_id, agent_id, task).await,
+        }
+    }
 
-        // Execute with timeout.
-        let result = tokio::time::timeout(
-            timeout,
-            self.agent.execute(task),
-        ).await;
-
-        match result {
-            Ok(Ok(output)) => {
-                self.circuit_breaker.record_success();
-                self.handle.record_task_completed(task_id, agent_id, output.clone())?;
-                Ok(output)
-            }
-            Ok(Err(e)) => {
-                self.circuit_breaker.record_failure();
-                self.handle.record_task_failed(task_id, agent_id, e.to_string())?;
-                Err(e)
-            }
+    async fn execute_with_timeout(
+        &mut self,
+        task_id: swarm_core::identity::TaskId,
+        agent_id: AgentId,
+        task: Task,
+        timeout: std::time::Duration,
+    ) -> SwarmResult<serde_json::Value> {
+        match tokio::time::timeout(timeout, self.agent.execute(task)).await {
+            Ok(result) => self.finish_execution(task_id, agent_id, result),
             Err(_elapsed) => {
                 self.circuit_breaker.record_failure();
                 self.handle.record_task_timed_out(task_id, agent_id)?;
@@ -109,11 +102,42 @@ impl TaskRunner {
             }
         }
     }
+
+    async fn execute_without_timeout(
+        &mut self,
+        task_id: swarm_core::identity::TaskId,
+        agent_id: AgentId,
+        task: Task,
+    ) -> SwarmResult<serde_json::Value> {
+        let result = self.agent.execute(task).await;
+        self.finish_execution(task_id, agent_id, result)
+    }
+
+    fn finish_execution(
+        &mut self,
+        task_id: swarm_core::identity::TaskId,
+        agent_id: AgentId,
+        result: SwarmResult<serde_json::Value>,
+    ) -> SwarmResult<serde_json::Value> {
+        match result {
+            Ok(output) => {
+                self.circuit_breaker.record_success();
+                self.handle.record_task_completed(task_id, agent_id, output.clone())?;
+                Ok(output)
+            }
+            Err(e) => {
+                self.circuit_breaker.record_failure();
+                self.handle.record_task_failed(task_id, agent_id, e.to_string())?;
+                Err(e)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use async_trait::async_trait;
     use swarm_core::{
         agent::{AgentDescriptor, AgentKind},
@@ -125,6 +149,9 @@ mod tests {
     struct OkAgent { descriptor: AgentDescriptor }
     struct FailAgent { descriptor: AgentDescriptor }
     struct SlowAgent { descriptor: AgentDescriptor }
+    struct VerySlowAgent { descriptor: AgentDescriptor }
+
+    const VERY_SLOW_TASK_DURATION: Duration = Duration::from_secs(500);
 
     #[async_trait]
     impl Agent for OkAgent {
@@ -149,6 +176,16 @@ mod tests {
         fn descriptor(&self) -> &AgentDescriptor { &self.descriptor }
         async fn execute(&mut self, _task: Task) -> SwarmResult<serde_json::Value> {
             tokio::time::sleep(Duration::from_millis(50)).await;
+            Ok(serde_json::json!({"slow": true}))
+        }
+        async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
+    }
+
+    #[async_trait]
+    impl Agent for VerySlowAgent {
+        fn descriptor(&self) -> &AgentDescriptor { &self.descriptor }
+        async fn execute(&mut self, _task: Task) -> SwarmResult<serde_json::Value> {
+            tokio::time::sleep(VERY_SLOW_TASK_DURATION).await;
             Ok(serde_json::json!({"slow": true}))
         }
         async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
@@ -231,6 +268,42 @@ mod tests {
 
         let timed_out_task = handle.get_task(&task_id).unwrap();
         assert_eq!(timed_out_task.status.label(), "timed_out");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_task_without_timeout_does_not_apply_default_deadline() {
+        let orch = Orchestrator::new();
+        let handle = orch.handle();
+
+        let desc = AgentDescriptor::new("very-slow-worker", AgentKind::Worker, CapabilitySet::new());
+        let agent = VerySlowAgent { descriptor: desc.clone() };
+        let agent_id = desc.id;
+
+        handle.register_agent(desc).unwrap();
+        handle.set_agent_ready(agent_id).unwrap();
+
+        let mut spec = TaskSpec::new("t", serde_json::json!({}));
+        spec.timeout = None;
+        let task_id = handle.submit_task(spec).unwrap();
+        handle.try_schedule_next().unwrap();
+
+        let task = handle.get_task(&task_id).unwrap();
+        let mut runner = TaskRunner::new(Box::new(agent), handle.clone());
+        let run = tokio::spawn(async move { runner.run_task(task).await });
+
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(301)).await;
+        tokio::task::yield_now().await;
+
+        assert!(
+            !run.is_finished(),
+            "task with timeout=None should not inherit a default deadline"
+        );
+
+        let running_task = handle.get_task(&task_id).unwrap();
+        assert_eq!(running_task.status.label(), "running");
+
+        run.abort();
     }
 
     #[tokio::test]

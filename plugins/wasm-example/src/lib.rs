@@ -158,11 +158,13 @@ pub unsafe extern "C" fn swarm_invoke(
     result_ptr: *mut u8,
     result_cap: usize,
 ) -> i32 {
-    let action = core::str::from_utf8(
-        core::slice::from_raw_parts(action_ptr, action_len)
-    ).unwrap_or("");
     let params_bytes = core::slice::from_raw_parts(params_ptr, params_len);
     let result_buf = core::slice::from_raw_parts_mut(result_ptr, result_cap);
+    let action_bytes = core::slice::from_raw_parts(action_ptr, action_len);
+    let action = match core::str::from_utf8(action_bytes) {
+        Ok(action) => action,
+        Err(_) => return write_error_with_fallback(result_buf, b"invalid UTF-8 action name"),
+    };
 
     match action {
         "echo" => {
