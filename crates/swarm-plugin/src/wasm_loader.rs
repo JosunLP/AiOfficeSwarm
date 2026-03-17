@@ -114,11 +114,11 @@ impl GuestAllocations {
         self.0.push(GuestAllocation { ptr, len });
     }
 
-    fn deallocate_all(self, rt: &mut WasmRuntime) -> SwarmResult<()> {
+    fn deallocate_all(self, rt: &mut WasmRuntime, plugin_name: &str) -> SwarmResult<()> {
         let mut first_err = None;
 
         for allocation in self.0.into_iter().rev() {
-            if let Err(err) = WasmPlugin::dealloc(rt, allocation.ptr, allocation.len) {
+            if let Err(err) = WasmPlugin::dealloc(rt, plugin_name, allocation.ptr, allocation.len) {
                 if first_err.is_none() {
                     first_err = Some(err);
                 }
@@ -190,11 +190,11 @@ impl WasmPlugin {
     }
 
     /// Free previously allocated WASM memory.
-    fn dealloc(rt: &mut WasmRuntime, ptr: i32, len: i32) -> SwarmResult<()> {
+    fn dealloc(rt: &mut WasmRuntime, plugin_name: &str, ptr: i32, len: i32) -> SwarmResult<()> {
         rt.fn_dealloc
             .call(&mut rt.store, (ptr, len))
             .map_err(|e| SwarmError::PluginOperationFailed {
-                name: "wasm".into(),
+                name: plugin_name.into(),
                 reason: format!("swarm_dealloc failed: {e}"),
             })
     }
@@ -212,7 +212,7 @@ impl WasmPlugin {
             plugin_name,
             rt.memory.data_size(&rt.store),
             ptr,
-            0,
+            RESULT_BUFFER_CAPACITY as usize,
             "swarm_alloc returned an invalid result buffer pointer",
         )?;
         Ok(ptr)
@@ -352,7 +352,7 @@ impl Plugin for WasmPlugin {
     }
 
     async fn invoke(
-        &self,
+        &mut self,
         action: &str,
         params: serde_json::Value,
     ) -> SwarmResult<serde_json::Value> {
@@ -441,7 +441,7 @@ impl Plugin for WasmPlugin {
             }
         })();
 
-        let cleanup_result = allocations.deallocate_all(rt);
+        let cleanup_result = allocations.deallocate_all(rt, &plugin_name);
         match (result, cleanup_result) {
             (Ok(value), Ok(())) => Ok(value),
             (Ok(_), Err(cleanup_err)) => Err(cleanup_err),
@@ -606,10 +606,10 @@ mod tests {
         // Use byte-by-byte copy loop (WASM 1.0, no bulk-memory proposal needed)
         let wat = r#"
 (module
-  ;; Two pages of linear memory (128 KiB).
+  ;; Six pages of linear memory (384 KiB).
   ;; Page 0 (0x00000 – 0x0FFFF): reserved for static data & result buffers
   ;; Page 1+ (0x10000+): bump allocator heap
-  (memory (export "memory") 2)
+  (memory (export "memory") 6)
 
   ;; Bump allocator state: starts at the beginning of page 1.
   (global $heap_ptr (mut i32) (i32.const 65536))
@@ -669,7 +669,7 @@ mod tests {
     fn invoke_error_no_message_wasm_bytes() -> Vec<u8> {
         let wat = r#"
 (module
-  (memory (export "memory") 2)
+  (memory (export "memory") 6)
   (global $heap_ptr (mut i32) (i32.const 65536))
   (func (export "swarm_alloc") (param $size i32) (result i32)
     (local $ptr i32)
@@ -697,7 +697,7 @@ mod tests {
         let wat = format!(
             r#"
 (module
-  (memory (export "memory") 2)
+  (memory (export "memory") 6)
   (global $heap_ptr (mut i32) (i32.const 65536))
   (func (export "swarm_alloc") (param $size i32) (result i32)
     (local $ptr i32)
@@ -812,7 +812,7 @@ mod tests {
     #[tokio::test]
     async fn invoke_fails_before_load() {
         let bytes = echo_wasm_bytes();
-        let plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
+        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
             .expect("compile");
         let result = plugin.invoke("echo", serde_json::json!({})).await;
         assert!(result.is_err(), "invoke before on_load should fail");

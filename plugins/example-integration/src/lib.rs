@@ -112,7 +112,7 @@ impl Plugin for NotificationPlugin {
     }
 
     async fn invoke(
-        &self,
+        &mut self,
         action: &str,
         params: serde_json::Value,
     ) -> SwarmResult<serde_json::Value> {

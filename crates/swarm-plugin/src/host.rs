@@ -24,7 +24,9 @@ use crate::{
 /// The host is responsible for:
 /// 1. Loading plugins (calling [`Plugin::on_load`]).
 /// 2. Routing invocations to the correct plugin.
-/// 3. Handling plugin failures and updating state in the registry.
+/// 3. Updating lifecycle state during load and unload operations. Action-level
+///    invocation errors are reported to the caller but do not automatically
+///    transition the plugin to [`PluginState::Failed`].
 /// 4. Unloading plugins gracefully.
 #[derive(Default)]
 pub struct PluginHost {
@@ -88,7 +90,7 @@ impl PluginHost {
                 reason: "plugin not loaded".into(),
             })?;
 
-        let plugin = instance.lock().await;
+        let mut plugin = instance.lock().await;
         let name = plugin.manifest().name.clone();
         plugin.invoke(action, params).await.map_err(|e| {
             SwarmError::PluginOperationFailed {
@@ -176,7 +178,7 @@ mod tests {
         fn manifest(&self) -> &PluginManifest { &self.manifest }
         async fn on_load(&mut self) -> SwarmResult<()> { Ok(()) }
         async fn on_unload(&mut self) -> SwarmResult<()> { Ok(()) }
-        async fn invoke(&self, _action: &str, params: serde_json::Value) -> SwarmResult<serde_json::Value> {
+        async fn invoke(&mut self, _action: &str, params: serde_json::Value) -> SwarmResult<serde_json::Value> {
             Ok(params)
         }
         async fn health_check(&self) -> SwarmResult<()> { Ok(()) }

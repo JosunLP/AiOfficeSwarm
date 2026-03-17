@@ -76,9 +76,11 @@ pub trait Plugin: Send + Sync {
     /// Invoke a named action provided by this plugin.
     ///
     /// The `action` parameter matches one of the action names declared in the
-    /// manifest. The `params` are free-form JSON.
+    /// manifest. The `params` are free-form JSON. The host serializes calls to
+    /// a plugin instance, so implementations may update in-memory plugin state
+    /// while handling an action.
     async fn invoke(
-        &self,
+        &mut self,
         action: &str,
         params: serde_json::Value,
     ) -> SwarmResult<serde_json::Value>;
