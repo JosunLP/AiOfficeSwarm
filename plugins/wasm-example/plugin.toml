@@ -9,7 +9,7 @@
 name             = "Echo WASM Plugin"
 
 # Semantic version of this plugin.
-version          = "1.0.0"
+version          = "0.1.0"
 
 # Author or vendor identifier.
 author           = "AiOfficeSwarm Contributors"

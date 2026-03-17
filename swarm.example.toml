@@ -10,6 +10,7 @@ event_channel_capacity = 1024
 # Maximum tasks to dispatch per scheduling tick.
 max_dispatch_per_tick = 16
 # Default task timeout in seconds (0 = no timeout).
+# Reserved for future runtime enforcement; currently not applied automatically.
 default_task_timeout_secs = 300
 # Maximum concurrent tasks across all agents.
 max_concurrent_tasks = 256
