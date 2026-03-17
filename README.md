@@ -225,7 +225,7 @@ impl Plugin for MyPlugin {
     fn manifest(&self) -> &PluginManifest { &self.manifest }
     async fn on_load(&mut self) -> SwarmResult<()> { Ok(()) }
     async fn on_unload(&mut self) -> SwarmResult<()> { Ok(()) }
-    async fn invoke(&self, action: &str, params: serde_json::Value) -> SwarmResult<serde_json::Value> {
+    async fn invoke(&mut self, action: &str, params: serde_json::Value) -> SwarmResult<serde_json::Value> {
         Ok(params)
     }
     async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
