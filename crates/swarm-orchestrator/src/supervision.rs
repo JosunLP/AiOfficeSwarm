@@ -26,6 +26,8 @@ use swarm_core::{
 #[derive(Clone, Default)]
 pub struct SupervisionManager {
     nodes: Arc<DashMap<AgentId, SupervisionTree>>,
+    /// Serializes mutations that need to update multiple supervision nodes
+    /// together so re-parenting and deregistration cannot interleave.
     mutation_lock: Arc<Mutex<()>>,
 }
 
@@ -90,12 +92,13 @@ impl SupervisionManager {
             }
         }
 
-        let mut agent_node = self
-            .nodes
-            .get_mut(&agent_id)
-            .ok_or(SwarmError::AgentNotFound { id: agent_id })?;
-        agent_node.supervisor = Some(supervisor_id);
-        drop(agent_node);
+        {
+            let mut agent_node = self
+                .nodes
+                .get_mut(&agent_id)
+                .ok_or(SwarmError::AgentNotFound { id: agent_id })?;
+            agent_node.supervisor = Some(supervisor_id);
+        }
 
         let mut supervisor_node = self
             .nodes
