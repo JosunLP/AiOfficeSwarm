@@ -14,7 +14,7 @@ subsystems independently.
 
 Organize the project as a **Cargo workspace** with one crate per layer:
 
-- `swarm-core` — zero-dependency domain layer
+- `swarm-core` — foundational domain layer with no internal workspace dependencies
 - `swarm-orchestrator` — control plane
 - `swarm-policy` — policy engine
 - `swarm-plugin` — plugin SDK

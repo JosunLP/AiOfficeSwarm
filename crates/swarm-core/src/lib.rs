@@ -9,8 +9,9 @@
 //! - **Status/lifecycle types**: Agent and task lifecycle state machines.
 //! - **RBAC primitives**: Roles, permissions, and authorization contracts.
 //!
-//! All other crates in the workspace depend on `swarm-core`. It contains **no
-//! infrastructure dependencies** — only pure domain logic and contracts.
+//! All other crates in the workspace depend on `swarm-core`. It provides the
+//! shared domain model and contracts, while avoiding dependencies on other
+//! workspace crates or runtime service integrations.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::all)]
