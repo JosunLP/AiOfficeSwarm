@@ -36,6 +36,21 @@ pub struct PluginHost {
 }
 
 impl PluginHost {
+    fn prepare_registry_slot(&self, id: &PluginId) -> SwarmResult<()> {
+        if let Some(existing) = self.registry.get(id) {
+            match existing.state {
+                PluginState::Failed { .. } => self.registry.deregister(id)?,
+                _ => {
+                    return Err(SwarmError::Internal {
+                        reason: format!("plugin {} is already registered", id),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Create an empty plugin host.
     pub fn new() -> Self {
         Self::default()
@@ -47,19 +62,7 @@ impl PluginHost {
         let id = manifest.id;
         let name = manifest.name.clone();
 
-        if let Some(existing) = self.registry.get(&id) {
-            match existing.state {
-                PluginState::Failed { .. } => {
-                    self.registry.deregister(&id)?;
-                }
-                _ => {
-                    return Err(SwarmError::Internal {
-                        reason: format!("plugin {} is already registered", id),
-                    });
-                }
-            }
-        }
-
+        self.prepare_registry_slot(&id)?;
         self.registry.register(manifest)?;
         self.registry.update_state(&id, PluginState::Loading)?;
 

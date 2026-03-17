@@ -103,7 +103,7 @@ fn summarize_values(values: &[f64]) -> (f64, f64, Option<f64>, Option<f64>) {
     (sum, mean, max, min)
 }
 
-async fn enforce_demo_action(
+async fn enforce_policy_check(
     policy_engine: &PolicyEngine,
     action: &str,
     resource: impl Into<String>,
@@ -225,7 +225,7 @@ async fn main() -> anyhow::Result<()> {
         c.add(Capability::new("text-processing"));
         c
     };
-    enforce_demo_action(&policy_engine, "submit_task", "task-queue").await?;
+    enforce_policy_check(&policy_engine, "submit_task", "task-queue").await?;
     let _task1_id = handle.submit_task(text_spec)?;
     metrics.inc_tasks_submitted();
     println!("  ✓ Submitted: summarize-report (High priority)");
@@ -239,12 +239,12 @@ async fn main() -> anyhow::Result<()> {
         c.add(Capability::new("data-analysis"));
         c
     };
-    enforce_demo_action(&policy_engine, "submit_task", "task-queue").await?;
+    enforce_policy_check(&policy_engine, "submit_task", "task-queue").await?;
     let _task2_id = handle.submit_task(data_spec)?;
     metrics.inc_tasks_submitted();
     println!("  ✓ Submitted: analyze-sales (Normal priority)");
 
-    enforce_demo_action(&policy_engine, "submit_task", "task-queue").await?;
+    enforce_policy_check(&policy_engine, "submit_task", "task-queue").await?;
     let _task3_id = handle.submit_task(TaskSpec::new(
         "summarize-meeting-notes",
         json!({ "text": "Team standup: sprint velocity is on track, two blockers identified in the backend integration module." }),
@@ -307,7 +307,7 @@ async fn main() -> anyhow::Result<()> {
         .load(Box::new(example_integration::NotificationPlugin::new("#ops-alerts")))
         .await?;
 
-    enforce_demo_action(&policy_engine, "invoke_plugin", plugin_id.to_string()).await?;
+    enforce_policy_check(&policy_engine, "invoke_plugin", plugin_id.to_string()).await?;
     let result = plugin_host
         .invoke(
             &plugin_id,
