@@ -93,9 +93,12 @@ impl PolicyEngine {
     /// - [`PolicyDecision::Denied`] if the first non-abstaining policy denies.
     /// - The configured default decision if all policies abstain.
     pub async fn evaluate(&self, context: &PolicyContext) -> SwarmResult<PolicyDecision> {
-        let policies = self.policies.read().await;
+        let policies: Vec<_> = {
+            let policies = self.policies.read().await;
+            policies.iter().cloned().collect()
+        };
 
-        for policy in policies.iter() {
+        for policy in &policies {
             match policy.evaluate(context).await? {
                 PolicyOutcome::Allow => {
                     tracing::debug!(
@@ -152,6 +155,37 @@ impl PolicyEngine {
 mod tests {
     use super::*;
     use crate::builtin::{AllowAllPolicy, DenyAllPolicy};
+    use async_trait::async_trait;
+    use std::{sync::Arc, time::Duration};
+    use tokio::sync::Notify;
+
+    struct BlockingPolicy {
+        id: PolicyId,
+        name: String,
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl Policy for BlockingPolicy {
+        fn id(&self) -> PolicyId {
+            self.id
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn evaluate(&self, _context: &PolicyContext) -> SwarmResult<PolicyOutcome> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok(PolicyOutcome::Abstain)
+        }
+
+        fn priority(&self) -> i32 {
+            100
+        }
+    }
 
     #[tokio::test]
     async fn allow_by_default_when_no_policies() {
@@ -232,5 +266,46 @@ mod tests {
         engine.register(Arc::new(DenyAllPolicy::new("deny-all", "blocked"))).await;
         let ctx = PolicyContext::new("delete_agent", "user", "agent");
         assert!(engine.enforce(&ctx).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn register_does_not_wait_for_inflight_policy_evaluation() {
+        let engine = PolicyEngine::allow_by_default();
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+
+        engine
+            .register(Arc::new(BlockingPolicy {
+                id: "00000000-0000-0000-0000-000000000111"
+                    .parse()
+                    .expect("test UUID should parse"),
+                name: "blocking-policy".into(),
+                started: Arc::clone(&started),
+                release: Arc::clone(&release),
+            }))
+            .await;
+
+        let eval_engine = engine.clone();
+        let ctx = PolicyContext::new("inspect", "agent-1", "resource-1");
+        let eval_task = tokio::spawn(async move { eval_engine.evaluate(&ctx).await });
+
+        started.notified().await;
+
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            engine.register(Arc::new(AllowAllPolicy::new("allow-all-fast"))),
+        )
+        .await
+        .expect("register should not wait for in-flight evaluation");
+
+        let policies = engine.policies.read().await;
+        assert!(policies.iter().any(|policy| policy.name() == "allow-all-fast"));
+        drop(policies);
+
+        release.notify_one();
+        eval_task
+            .await
+            .expect("evaluation task should finish")
+            .expect("evaluation should succeed");
     }
 }

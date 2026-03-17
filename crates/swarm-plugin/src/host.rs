@@ -68,6 +68,7 @@ impl PluginHost {
                         failed_at: Utc::now(),
                     },
                 )?;
+                self.registry.deregister(&id)?;
                 tracing::error!(plugin_id = %id, name = %name, reason = %reason, "Plugin failed to load");
                 Err(SwarmError::PluginInitFailed { name, reason })
             }
@@ -165,9 +166,22 @@ mod tests {
         manifest: PluginManifest,
     }
 
+    struct FailingLoadPlugin {
+        manifest: PluginManifest,
+    }
+
     impl EchoPlugin {
         fn new() -> Self {
             let mut manifest = PluginManifest::new("echo", "1.0.0", "test", "Echoes inputs");
+            manifest.capabilities.push(PluginCapabilityKind::ActionProvider);
+            Self { manifest }
+        }
+    }
+
+    impl FailingLoadPlugin {
+        fn new() -> Self {
+            let mut manifest =
+                PluginManifest::new("failing-load", "1.0.0", "test", "Fails during load");
             manifest.capabilities.push(PluginCapabilityKind::ActionProvider);
             Self { manifest }
         }
@@ -180,6 +194,22 @@ mod tests {
         async fn on_unload(&mut self) -> SwarmResult<()> { Ok(()) }
         async fn invoke(&mut self, _action: &str, params: serde_json::Value) -> SwarmResult<serde_json::Value> {
             Ok(params)
+        }
+        async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
+    }
+
+    #[async_trait]
+    impl Plugin for FailingLoadPlugin {
+        fn manifest(&self) -> &PluginManifest { &self.manifest }
+        async fn on_load(&mut self) -> SwarmResult<()> {
+            Err(SwarmError::PluginInitFailed {
+                name: self.manifest.name.clone(),
+                reason: "load failed".into(),
+            })
+        }
+        async fn on_unload(&mut self) -> SwarmResult<()> { Ok(()) }
+        async fn invoke(&mut self, _action: &str, _params: serde_json::Value) -> SwarmResult<serde_json::Value> {
+            Ok(serde_json::Value::Null)
         }
         async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
     }
@@ -198,5 +228,17 @@ mod tests {
         host.unload(&plugin_id).await.unwrap();
         let record = host.registry().get(&plugin_id).unwrap();
         assert_eq!(record.state.label(), "unloaded");
+    }
+
+    #[tokio::test]
+    async fn failed_load_deregisters_plugin_record() {
+        let host = PluginHost::new();
+        let plugin = FailingLoadPlugin::new();
+        let plugin_id = plugin.manifest.id;
+
+        let result = host.load(Box::new(plugin)).await;
+
+        assert!(matches!(result, Err(SwarmError::PluginInitFailed { .. })));
+        assert!(host.registry().get(&plugin_id).is_none());
     }
 }

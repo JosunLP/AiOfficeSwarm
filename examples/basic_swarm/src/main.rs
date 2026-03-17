@@ -94,6 +94,14 @@ impl DataAnalysisAgent {
     }
 }
 
+fn summarize_values(values: &[f64]) -> (f64, f64, Option<f64>, Option<f64>) {
+    let sum: f64 = values.iter().sum();
+    let mean = if values.is_empty() { 0.0 } else { sum / values.len() as f64 };
+    let max = values.iter().copied().reduce(f64::max);
+    let min = values.iter().copied().reduce(f64::min);
+    (sum, mean, max, min)
+}
+
 #[async_trait]
 impl Agent for DataAnalysisAgent {
     fn descriptor(&self) -> &AgentDescriptor {
@@ -106,10 +114,7 @@ impl Agent for DataAnalysisAgent {
             .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
             .unwrap_or_default();
 
-        let sum: f64 = values.iter().sum();
-        let mean = if values.is_empty() { 0.0 } else { sum / values.len() as f64 };
-        let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
+        let (sum, mean, max, min) = summarize_values(&values);
 
         info!(
             agent = %self.descriptor.name,
@@ -130,6 +135,31 @@ impl Agent for DataAnalysisAgent {
 
     async fn health_check(&self) -> SwarmResult<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::summarize_values;
+
+    #[test]
+    fn summarize_values_returns_nullish_bounds_for_empty_input() {
+        let (sum, mean, max, min) = summarize_values(&[]);
+
+        assert_eq!(sum, 0.0);
+        assert_eq!(mean, 0.0);
+        assert_eq!(max, None);
+        assert_eq!(min, None);
+    }
+
+    #[test]
+    fn summarize_values_reports_numeric_bounds_for_non_empty_input() {
+        let (sum, mean, max, min) = summarize_values(&[1.0, 4.0, 2.0]);
+
+        assert_eq!(sum, 7.0);
+        assert!((mean - (7.0 / 3.0)).abs() < f64::EPSILON);
+        assert_eq!(max, Some(4.0));
+        assert_eq!(min, Some(1.0));
     }
 }
 
