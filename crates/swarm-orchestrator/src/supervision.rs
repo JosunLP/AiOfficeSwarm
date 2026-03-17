@@ -42,27 +42,46 @@ impl SupervisionManager {
 
     /// Register an agent under a supervisor.
     ///
-    /// Both the subordinate and the supervisor must be registered.
+    /// Both the subordinate and the supervisor must already be registered.
+    /// If the subordinate was previously a root node or supervised by a
+    /// different agent, it is re-parented under `supervisor_id`.
     pub fn register_under(
         &self,
         agent_id: AgentId,
         supervisor_id: AgentId,
     ) -> SwarmResult<()> {
-        match self.nodes.entry(agent_id) {
-            Entry::Occupied(_) => Err(SwarmError::Internal {
-                reason: format!("agent {} is already registered in supervision", agent_id),
-            }),
-            Entry::Vacant(entry) => {
-                entry.insert(SupervisionTree::with_supervisor(agent_id, supervisor_id));
-                if let Some(mut supervisor_node) = self.nodes.get_mut(&supervisor_id) {
-                    supervisor_node.add_subordinate(agent_id);
-                    Ok(())
-                } else {
-                    self.nodes.remove(&agent_id);
-                    Err(SwarmError::AgentNotFound { id: supervisor_id })
+        if agent_id == supervisor_id {
+            return Err(SwarmError::Internal {
+                reason: format!("agent {} cannot supervise itself", agent_id),
+            });
+        }
+
+        if !self.nodes.contains_key(&supervisor_id) {
+            return Err(SwarmError::AgentNotFound { id: supervisor_id });
+        }
+
+        let previous_supervisor = match self.nodes.entry(agent_id) {
+            Entry::Occupied(entry) => entry.get().supervisor,
+            Entry::Vacant(_) => return Err(SwarmError::AgentNotFound { id: agent_id }),
+        };
+
+        if let Some(old_supervisor_id) = previous_supervisor {
+            if old_supervisor_id != supervisor_id {
+                if let Some(mut old_supervisor_node) = self.nodes.get_mut(&old_supervisor_id) {
+                    old_supervisor_node.subordinates.retain(|id| id != &agent_id);
                 }
             }
         }
+
+        if let Some(mut agent_node) = self.nodes.get_mut(&agent_id) {
+            agent_node.supervisor = Some(supervisor_id);
+        }
+
+        if let Some(mut supervisor_node) = self.nodes.get_mut(&supervisor_id) {
+            supervisor_node.add_subordinate(agent_id);
+        }
+
+        Ok(())
     }
 
     /// Remove an agent from the supervision tree.
@@ -72,6 +91,13 @@ impl SupervisionManager {
             if let Some(supervisor_id) = node.supervisor {
                 if let Some(mut sup_node) = self.nodes.get_mut(&supervisor_id) {
                     sup_node.subordinates.retain(|id| id != agent_id);
+                }
+            }
+
+            // Re-root any remaining subordinates so the tree stays consistent.
+            for subordinate_id in node.subordinates {
+                if let Some(mut subordinate_node) = self.nodes.get_mut(&subordinate_id) {
+                    subordinate_node.supervisor = None;
                 }
             }
         }
@@ -123,6 +149,7 @@ mod tests {
         let worker = AgentId::new();
 
         mgr.register_root(exec);
+        mgr.register_root(worker);
         mgr.register_under(worker, exec).unwrap();
 
         assert_eq!(mgr.supervisor_of(&worker), Some(exec));
@@ -135,12 +162,25 @@ mod tests {
         let unknown = AgentId::new();
         let worker = AgentId::new();
 
+        mgr.register_root(worker);
         let result = mgr.register_under(worker, unknown);
         assert!(result.is_err());
     }
 
     #[test]
-    fn register_under_duplicate_agent_fails_without_overwriting() {
+    fn register_under_unknown_agent_fails() {
+        let mgr = SupervisionManager::new();
+        let exec = AgentId::new();
+        let worker = AgentId::new();
+
+        mgr.register_root(exec);
+
+        let result = mgr.register_under(worker, exec);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_under_reparents_existing_agent() {
         let mgr = SupervisionManager::new();
         let exec = AgentId::new();
         let worker = AgentId::new();
@@ -148,13 +188,14 @@ mod tests {
 
         mgr.register_root(exec);
         mgr.register_root(other_exec);
+        mgr.register_root(worker);
         mgr.register_under(worker, exec).unwrap();
 
-        let result = mgr.register_under(worker, other_exec);
-        assert!(result.is_err());
-        assert_eq!(mgr.supervisor_of(&worker), Some(exec));
-        assert_eq!(mgr.subordinates_of(&exec), vec![worker]);
-        assert!(mgr.subordinates_of(&other_exec).is_empty());
+        mgr.register_under(worker, other_exec).unwrap();
+
+        assert_eq!(mgr.supervisor_of(&worker), Some(other_exec));
+        assert!(mgr.subordinates_of(&exec).is_empty());
+        assert_eq!(mgr.subordinates_of(&other_exec), vec![worker]);
     }
 
     #[test]
@@ -165,6 +206,8 @@ mod tests {
         let worker = AgentId::new();
 
         mgr.register_root(exec);
+        mgr.register_root(manager);
+        mgr.register_root(worker);
         mgr.register_under(manager, exec).unwrap();
         mgr.register_under(worker, manager).unwrap();
 
@@ -179,9 +222,30 @@ mod tests {
         let worker = AgentId::new();
 
         mgr.register_root(exec);
+        mgr.register_root(worker);
         mgr.register_under(worker, exec).unwrap();
         mgr.deregister(&worker);
 
         assert!(mgr.subordinates_of(&exec).is_empty());
+    }
+
+    #[test]
+    fn deregister_re_roots_subordinates() {
+        let mgr = SupervisionManager::new();
+        let exec = AgentId::new();
+        let manager = AgentId::new();
+        let worker = AgentId::new();
+
+        mgr.register_root(exec);
+        mgr.register_root(manager);
+        mgr.register_root(worker);
+        mgr.register_under(manager, exec).unwrap();
+        mgr.register_under(worker, manager).unwrap();
+
+        mgr.deregister(&manager);
+
+        assert!(mgr.subordinates_of(&exec).is_empty());
+        assert_eq!(mgr.supervisor_of(&worker), None);
+        assert!(mgr.ancestry(&worker).is_empty());
     }
 }
