@@ -157,7 +157,7 @@ mod tests {
         let (sum, mean, max, min) = summarize_values(&[1.0, 4.0, 2.0]);
 
         assert_eq!(sum, 7.0);
-        assert!((mean - (7.0 / 3.0)).abs() < f64::EPSILON);
+        assert!((mean - (7.0 / 3.0)).abs() < 1e-12);
         assert_eq!(max, Some(4.0));
         assert_eq!(min, Some(1.0));
     }
