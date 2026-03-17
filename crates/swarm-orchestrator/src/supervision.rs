@@ -11,7 +11,7 @@
 //! level. The executive may decide to restart the agent, reassign its tasks,
 //! or halt the affected workflow.
 
-use dashmap::{mapref::entry::Entry, DashMap};
+use dashmap::DashMap;
 use std::sync::Arc;
 
 use swarm_core::{
@@ -60,15 +60,21 @@ impl SupervisionManager {
             return Err(SwarmError::AgentNotFound { id: supervisor_id });
         }
 
-        let previous_supervisor = match self.nodes.entry(agent_id) {
-            Entry::Occupied(entry) => entry.get().supervisor,
-            Entry::Vacant(_) => return Err(SwarmError::AgentNotFound { id: agent_id }),
+        let previous_supervisor = match self.nodes.get(&agent_id) {
+            Some(node) => node.supervisor,
+            None => return Err(SwarmError::AgentNotFound { id: agent_id }),
         };
 
         if let Some(old_supervisor_id) = previous_supervisor {
             if old_supervisor_id != supervisor_id {
                 if let Some(mut old_supervisor_node) = self.nodes.get_mut(&old_supervisor_id) {
                     old_supervisor_node.subordinates.retain(|id| id != &agent_id);
+                } else {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        old_supervisor_id = %old_supervisor_id,
+                        "agent had a missing previous supervisor while being re-parented"
+                    );
                 }
             }
         }
