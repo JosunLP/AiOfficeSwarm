@@ -135,7 +135,7 @@ impl CircuitBreaker {
         let result = match &inner.state {
             CircuitState::Closed => Ok(()),
             CircuitState::HalfOpen => Err(SwarmError::Internal {
-                reason: format!("circuit '{}' is half-open; probe already in flight", self.name),
+                reason: format!("circuit '{}' is half-open; only one probe permitted", self.name),
             }),
             CircuitState::Open { retry_after, .. } => {
                 if open_deadline_elapsed {
