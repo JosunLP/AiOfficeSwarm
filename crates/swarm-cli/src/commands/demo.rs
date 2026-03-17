@@ -1,9 +1,7 @@
 //! `swarm demo` sub-command: runs an in-process demonstration of the framework.
 //!
 //! The demo creates a small swarm with:
-//! - One Executive agent
-//! - One Manager agent supervised by the Executive
-//! - Two Worker agents supervised by the Manager
+//! - Two Worker agents
 //!
 //! It submits several tasks, runs them through the runtime, and prints a
 //! summary showing the framework in action.

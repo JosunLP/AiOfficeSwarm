@@ -35,10 +35,7 @@ pub enum CircuitState {
         retry_after: DateTime<Utc>,
     },
     /// One probe call is allowed; outcome determines next state.
-    HalfOpen {
-        /// Whether the single probe permit has already been claimed.
-        probe_in_flight: bool,
-    },
+    HalfOpen,
 }
 
 /// Configuration for a circuit breaker.
@@ -137,11 +134,7 @@ impl CircuitBreaker {
 
         let result = match &inner.state {
             CircuitState::Closed => Ok(()),
-            CircuitState::HalfOpen { probe_in_flight: false } => {
-                transition_to_half_open = true;
-                Ok(())
-            }
-            CircuitState::HalfOpen { probe_in_flight: true } => Err(SwarmError::Internal {
+            CircuitState::HalfOpen => Err(SwarmError::Internal {
                 reason: format!("circuit '{}' is half-open; probe already in flight", self.name),
             }),
             CircuitState::Open { retry_after, .. } => {
@@ -161,9 +154,7 @@ impl CircuitBreaker {
 
         if transition_to_half_open {
             tracing::info!(circuit = %self.name, "Circuit transitioning to HalfOpen");
-            inner.state = CircuitState::HalfOpen {
-                probe_in_flight: true,
-            };
+            inner.state = CircuitState::HalfOpen;
             inner.retry_deadline = None;
         }
 
@@ -174,7 +165,7 @@ impl CircuitBreaker {
     /// resets the failure counter.
     pub fn record_success(&self) {
         let mut inner = self.lock_inner();
-        if matches!(inner.state, CircuitState::HalfOpen { .. }) {
+        if matches!(inner.state, CircuitState::HalfOpen) {
             tracing::info!(circuit = %self.name, "Circuit closed after successful probe");
         }
         inner.state = CircuitState::Closed;
@@ -189,7 +180,7 @@ impl CircuitBreaker {
         inner.consecutive_failures += 1;
         let should_open = match &inner.state {
             CircuitState::Closed => inner.consecutive_failures >= inner.config.failure_threshold,
-            CircuitState::HalfOpen { .. } => true,
+            CircuitState::HalfOpen => true,
             CircuitState::Open { .. } => false,
         };
         if should_open {
@@ -284,9 +275,7 @@ mod tests {
         assert!(cb.acquire().is_ok());
         assert!(matches!(
             cb.state(),
-            CircuitState::HalfOpen {
-                probe_in_flight: true
-            }
+            CircuitState::HalfOpen
         ));
         assert!(cb.acquire().is_err());
 
