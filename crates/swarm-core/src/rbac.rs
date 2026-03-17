@@ -28,13 +28,19 @@ pub enum Subject {
 
 impl Subject {
     /// Returns a stable string representation for use in audit logs.
-    pub fn as_str(&self) -> String {
+    pub fn audit_key(&self) -> String {
         match self {
             Subject::Agent(id) => format!("agent:{}", id),
             Subject::User(name) => format!("user:{}", name),
             Subject::ServiceAccount(name) => format!("serviceaccount:{}", name),
             Subject::Plugin(name) => format!("plugin:{}", name),
         }
+    }
+}
+
+impl std::fmt::Display for Subject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.audit_key())
     }
 }
 
@@ -198,6 +204,7 @@ mod tests {
     #[test]
     fn subject_display() {
         let s = Subject::Agent("abc-123".into());
-        assert_eq!(s.as_str(), "agent:abc-123");
+        assert_eq!(s.audit_key(), "agent:abc-123");
+        assert_eq!(s.to_string(), "agent:abc-123");
     }
 }

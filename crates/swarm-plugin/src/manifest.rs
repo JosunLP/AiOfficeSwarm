@@ -48,9 +48,10 @@ pub struct PluginAction {
 
 /// An OS-level sandbox permission that a WASM plugin is allowed to use.
 ///
-/// When loading a WASM plugin the host validates these permissions against
-/// its sandbox policy before instantiating the WASM module. Permissions that
-/// are not granted will cause the plugin to fail to load.
+/// These declarations describe the OS-level resources a WASM plugin expects to
+/// access. The current host carries them through the manifest for inspection,
+/// audit, or embedding-application enforcement; they are not yet enforced by
+/// [`crate::wasm_loader::WasmPluginLoader`] during instantiation.
 ///
 /// These are _separate_ from the framework-level RBAC permissions stored in
 /// [`PluginManifest::required_permissions`], which control what actions the
@@ -121,7 +122,7 @@ pub struct PluginManifest {
     /// OS-level sandbox permissions required by this WASM plugin.
     ///
     /// Empty for native (non-WASM) plugins. For WASM plugins these declare
-    /// what system resources the sandboxed module may access.
+    /// what system resources the sandboxed module expects to access.
     #[serde(default)]
     pub wasm_permissions: Vec<WasmPermission>,
 }

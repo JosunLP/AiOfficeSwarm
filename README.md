@@ -189,8 +189,8 @@ pub unsafe extern "C" fn swarm_invoke(
 ) -> i32 {
     // return n >= 0 on success (n bytes of JSON at result_ptr)
     // return n < 0 on error  ((-n) bytes of error message at result_ptr)
-    let input = std::slice::from_raw_parts(params_ptr, params_len);
-    let out   = std::slice::from_raw_parts_mut(result_ptr, result_cap);
+    let input = core::slice::from_raw_parts(params_ptr, params_len);
+    let out   = core::slice::from_raw_parts_mut(result_ptr, result_cap);
     let n = input.len().min(result_cap);
     out[..n].copy_from_slice(&input[..n]);
     n as i32

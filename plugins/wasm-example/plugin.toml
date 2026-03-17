@@ -32,7 +32,7 @@ required_permissions = []
 
 # ── WASM sandbox permissions ────────────────────────────────────────────────
 # Declare all OS-level resources the WASM module is allowed to access.
-# The host enforces these before instantiating the module.
+# These are currently declarative metadata for inspection and future enforcement.
 # This plugin needs no special OS access.
 
 # ── Actions ─────────────────────────────────────────────────────────────────

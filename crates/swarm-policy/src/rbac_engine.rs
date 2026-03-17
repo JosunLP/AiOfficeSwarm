@@ -18,7 +18,7 @@ pub struct RbacEngine {
     /// Map from role name to Role definition.
     roles: Arc<DashMap<String, Role>>,
     /// Map from Subject to the set of role names assigned to it.
-    assignments: Arc<DashMap<String, HashSet<String>>>,
+    assignments: Arc<DashMap<Subject, HashSet<String>>>,
 }
 
 impl RbacEngine {
@@ -38,18 +38,17 @@ impl RbacEngine {
     /// If the role does not exist yet, the assignment is stored but will not
     /// grant any permissions until the role is defined.
     pub fn assign_role(&self, subject: &Subject, role_name: impl Into<String>) {
-        let key = subject.as_str();
         let role = role_name.into();
         self.assignments
-            .entry(key)
+            .entry(subject.clone())
             .or_insert_with(HashSet::new)
             .insert(role.clone());
-        tracing::debug!(subject = subject.as_str(), role = %role, "Role assigned to subject");
+        tracing::debug!(subject = %subject, role = %role, "Role assigned to subject");
     }
 
     /// Revoke a role from a subject.
     pub fn revoke_role(&self, subject: &Subject, role_name: &str) {
-        if let Some(mut roles) = self.assignments.get_mut(&subject.as_str()) {
+        if let Some(mut roles) = self.assignments.get_mut(subject) {
             roles.remove(role_name);
         }
     }
@@ -57,8 +56,7 @@ impl RbacEngine {
     /// Returns `true` if the subject has been granted the required permission
     /// through any of their assigned roles.
     pub fn has_permission(&self, subject: &Subject, required: &Permission) -> bool {
-        let key = subject.as_str();
-        let Some(role_names) = self.assignments.get(&key) else {
+        let Some(role_names) = self.assignments.get(subject) else {
             return false;
         };
         role_names.iter().any(|role_name| {
@@ -71,8 +69,7 @@ impl RbacEngine {
 
     /// Return all permissions granted to a subject across all their roles.
     pub fn effective_permissions(&self, subject: &Subject) -> Vec<Permission> {
-        let key = subject.as_str();
-        let Some(role_names) = self.assignments.get(&key) else {
+        let Some(role_names) = self.assignments.get(subject) else {
             return Vec::new();
         };
         let mut perms: HashSet<Permission> = HashSet::new();
