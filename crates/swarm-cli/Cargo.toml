@@ -35,3 +35,4 @@ tempfile = "3.13"
 self-replace = "1.5"
 walkdir = "2.5"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
+sha2 = "0.10"

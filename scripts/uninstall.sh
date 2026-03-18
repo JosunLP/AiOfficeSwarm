@@ -17,11 +17,8 @@ else
 fi
 
 if [ -d "$INSTALL_DIR" ]; then
-  if entries="$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)"; then
-    if [ -z "$entries" ]; then
-      rmdir "$INSTALL_DIR"
-      say "Removed empty directory $INSTALL_DIR"
-    fi
+  if rmdir "$INSTALL_DIR" 2>/dev/null; then
+    say "Removed empty directory $INSTALL_DIR"
   fi
 fi
 

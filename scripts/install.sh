@@ -4,6 +4,7 @@ set -eu
 REPO_OWNER="JosunLP"
 REPO_NAME="AiOfficeSwarm"
 BINARY_NAME="swarm"
+CHECKSUMS_NAME="SHA256SUMS"
 INSTALL_DIR="${SWARM_INSTALL_DIR:-${HOME}/.local/bin}"
 REQUESTED_VERSION="${1:-latest}"
 
@@ -61,6 +62,7 @@ need_cmd uname
 need_cmd mktemp
 need_cmd tar
 need_cmd install
+need_cmd awk
 
 if command -v curl >/dev/null 2>&1; then
   DOWNLOAD_TOOL='curl'
@@ -70,14 +72,24 @@ else
   fail 'curl or wget is required'
 fi
 
+if command -v sha256sum >/dev/null 2>&1; then
+  CHECKSUM_TOOL='sha256sum'
+elif command -v shasum >/dev/null 2>&1; then
+  CHECKSUM_TOOL='shasum'
+else
+  fail 'sha256sum or shasum is required'
+fi
+
 ARCH="$(normalize_arch "$(uname -m)")"
 PLATFORM="$(normalize_os "$(uname -s)")"
 TARGET="${ARCH}-${PLATFORM}"
 validate_target "$TARGET"
 ASSET_NAME="${BINARY_NAME}-${TARGET}.tar.gz"
 DOWNLOAD_URL="$(build_download_url "$ASSET_NAME")"
+CHECKSUMS_URL="$(build_download_url "$CHECKSUMS_NAME")"
 TMP_DIR="$(mktemp -d)"
 ARCHIVE_PATH="$TMP_DIR/$ASSET_NAME"
+CHECKSUMS_PATH="$TMP_DIR/$CHECKSUMS_NAME"
 BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
 
 cleanup() {
@@ -91,14 +103,34 @@ say "Downloading $ASSET_NAME ..."
 case "$DOWNLOAD_TOOL" in
   curl)
     curl -fsSL "$DOWNLOAD_URL" -o "$ARCHIVE_PATH"
+    curl -fsSL "$CHECKSUMS_URL" -o "$CHECKSUMS_PATH"
     ;;
   wget)
     wget -q -O "$ARCHIVE_PATH" "$DOWNLOAD_URL"
+    wget -q -O "$CHECKSUMS_PATH" "$CHECKSUMS_URL"
     ;;
   *)
     fail "Unknown download tool"
     ;;
 esac
+
+say "Verifying checksum ..."
+EXPECTED_CHECKSUM="$(awk -v asset="$ASSET_NAME" '$2 == asset || $2 == "*" asset { print $1; exit }' "$CHECKSUMS_PATH")"
+[ -n "$EXPECTED_CHECKSUM" ] || fail "Checksum for $ASSET_NAME not found in $CHECKSUMS_NAME"
+
+case "$CHECKSUM_TOOL" in
+  sha256sum)
+    ACTUAL_CHECKSUM="$(sha256sum "$ARCHIVE_PATH" | awk '{ print $1 }')"
+    ;;
+  shasum)
+    ACTUAL_CHECKSUM="$(shasum -a 256 "$ARCHIVE_PATH" | awk '{ print $1 }')"
+    ;;
+  *)
+    fail "Unknown checksum tool"
+    ;;
+esac
+
+[ "$ACTUAL_CHECKSUM" = "$EXPECTED_CHECKSUM" ] || fail "Checksum verification failed for $ASSET_NAME"
 
 say "Installing to $INSTALL_DIR ..."
 tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"

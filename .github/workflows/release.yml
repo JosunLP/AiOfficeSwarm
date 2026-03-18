@@ -101,6 +101,11 @@ jobs:
           pattern: swarm-*
           merge-multiple: true
 
+      - name: Generate SHA256 checksums
+        run: |
+          cd dist
+          sha256sum swarm-* > SHA256SUMS
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
