@@ -261,11 +261,12 @@ async fn verify_asset_checksum(
     Ok(())
 }
 
-fn checksum_for_asset<'a>(checksums: &'a str, asset_name: &str) -> anyhow::Result<&'a str> {
+fn checksum_for_asset(checksums: &str, asset_name: &str) -> anyhow::Result<String> {
     checksums
         .lines()
         .filter_map(parse_checksum_line)
         .find_map(|(checksum, name)| (name == asset_name).then_some(checksum))
+        .map(str::to_ascii_lowercase)
         .ok_or_else(|| anyhow!("checksum entry not found"))
 }
 
@@ -748,7 +749,7 @@ mod tests {
     fn finds_matching_checksum_entry() {
         let checksums = "\
 8f434346648f6b96df89dda901c5176b10a6d83961fca1c64c23d8bbf6f39767  swarm-x86_64-unknown-linux-gnu.tar.gz\n\
-1e8bfeaa6f86db89ddfce3dc775100e91eb54a4d6ffb8f2a4832460d62d3901f  swarm-x86_64-pc-windows-msvc.zip\n";
+1E8BFEAA6F86DB89DDFCE3DC775100E91EB54A4D6FFB8F2A4832460D62D3901F  swarm-x86_64-pc-windows-msvc.zip\n";
 
         assert_eq!(
             checksum_for_asset(checksums, "swarm-x86_64-pc-windows-msvc.zip").unwrap(),
