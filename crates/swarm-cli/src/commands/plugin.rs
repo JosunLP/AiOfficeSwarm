@@ -19,7 +19,9 @@ pub enum PluginSubcommand {
 pub async fn run(args: PluginArgs, _config: &SwarmConfig) -> anyhow::Result<()> {
     match args.subcommand {
         PluginSubcommand::List => {
-            println!("Loaded plugins: (no persistent store in this session — use the demo command)");
+            println!(
+                "Loaded plugins: (no persistent store in this session — use the demo command)"
+            );
         }
     }
     Ok(())

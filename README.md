@@ -44,6 +44,94 @@ cargo test --workspace
 
 ---
 
+## Installation
+
+Für die erste veröffentlichte Version ist `v0.1.0` vorgesehen.
+Die Beispiele unten zeigen sowohl **latest** als auch eine **fest gepinnte Version**.
+
+### Linux / macOS
+
+**Schnellstart (neueste Version)**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.sh -o install-swarm.sh
+sh install-swarm.sh
+rm install-swarm.sh
+```
+
+Installiert `swarm` standardmäßig nach `~/.local/bin`.
+Mit `SWARM_INSTALL_DIR=/mein/pfad` kann das Zielverzeichnis überschrieben werden.
+
+**Bestimmte Version installieren**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.sh -o install-swarm.sh
+sh install-swarm.sh v0.1.0
+rm install-swarm.sh
+```
+
+### Windows (PowerShell)
+
+**Schnellstart (neueste Version)**
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.ps1 -OutFile install-swarm.ps1
+.\install-swarm.ps1
+Remove-Item .\install-swarm.ps1
+```
+
+Installiert `swarm.exe` standardmäßig nach `%LOCALAPPDATA%\AiOfficeSwarm\bin`.
+
+**Bestimmte Version installieren**
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.ps1 -OutFile install-swarm.ps1
+.\install-swarm.ps1 -Version v0.1.0
+Remove-Item .\install-swarm.ps1
+```
+
+### Installation prüfen
+
+```bash
+swarm --version
+swarm demo
+```
+
+### Aktualisieren
+
+Nach der Installation kann sich die CLI selbst aktualisieren:
+
+```bash
+swarm update
+swarm update --check
+swarm update --version v0.1.0
+```
+
+### Deinstallation
+
+- Linux / macOS:
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/uninstall.sh -o uninstall-swarm.sh
+    sh uninstall-swarm.sh
+    rm uninstall-swarm.sh
+    ```
+
+- Windows:
+
+    ```powershell
+    Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/uninstall.ps1 -OutFile uninstall-swarm.ps1
+    .\uninstall-swarm.ps1
+    Remove-Item .\uninstall-swarm.ps1
+    ```
+
+### Release-Hinweise
+
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Geplanter erster Release-Tag: `v0.1.0`
+
+---
+
 ## Workspace Layout
 
 ```bash

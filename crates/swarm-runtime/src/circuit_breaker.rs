@@ -135,7 +135,10 @@ impl CircuitBreaker {
         let result = match &inner.state {
             CircuitState::Closed => Ok(()),
             CircuitState::HalfOpen => Err(SwarmError::Internal {
-                reason: format!("circuit '{}' is half-open; only one probe permitted", self.name),
+                reason: format!(
+                    "circuit '{}' is half-open; only one probe permitted",
+                    self.name
+                ),
             }),
             CircuitState::Open { retry_after, .. } => {
                 if open_deadline_elapsed {
@@ -186,8 +189,8 @@ impl CircuitBreaker {
         if should_open {
             let opened_at = Utc::now();
             let std_duration = Duration::from_secs(inner.config.open_duration_secs);
-            let chrono_duration = chrono::Duration::from_std(std_duration)
-                .unwrap_or(chrono::Duration::MAX);
+            let chrono_duration =
+                chrono::Duration::from_std(std_duration).unwrap_or(chrono::Duration::MAX);
             let retry_after = opened_at + chrono_duration;
             let retry_deadline = Instant::now() + std_duration;
             tracing::warn!(
@@ -195,7 +198,10 @@ impl CircuitBreaker {
                 failures = inner.consecutive_failures,
                 "Circuit opened due to repeated failures"
             );
-            inner.state = CircuitState::Open { opened_at, retry_after };
+            inner.state = CircuitState::Open {
+                opened_at,
+                retry_after,
+            };
             inner.retry_deadline = Some(retry_deadline);
         }
     }
@@ -206,10 +212,13 @@ mod tests {
     use super::*;
 
     fn make_cb(threshold: u32) -> CircuitBreaker {
-        CircuitBreaker::with_config("test", CircuitBreakerConfig {
-            failure_threshold: threshold,
-            open_duration_secs: 60,
-        })
+        CircuitBreaker::with_config(
+            "test",
+            CircuitBreakerConfig {
+                failure_threshold: threshold,
+                open_duration_secs: 60,
+            },
+        )
     }
 
     #[test]
@@ -275,10 +284,7 @@ mod tests {
         assert!(matches!(cb.state(), CircuitState::Open { .. }));
 
         assert!(cb.acquire().is_ok());
-        assert!(matches!(
-            cb.state(),
-            CircuitState::HalfOpen
-        ));
+        assert!(matches!(cb.state(), CircuitState::HalfOpen));
         assert!(cb.acquire().is_err());
 
         cb.record_success();

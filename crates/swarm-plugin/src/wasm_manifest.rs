@@ -201,12 +201,14 @@ impl WasmManifestFile {
 
         // Canonicalize both paths to prevent directory-traversal attacks
         // (e.g., wasm_file = "../outside.wasm").
-        let canonical_dir = manifest_dir.canonicalize().map_err(|e| SwarmError::Internal {
-            reason: format!(
-                "could not canonicalize manifest directory '{}': {e}",
-                manifest_dir.display()
-            ),
-        })?;
+        let canonical_dir = manifest_dir
+            .canonicalize()
+            .map_err(|e| SwarmError::Internal {
+                reason: format!(
+                    "could not canonicalize manifest directory '{}': {e}",
+                    manifest_dir.display()
+                ),
+            })?;
         let canonical_wasm = wasm_path.canonicalize().map_err(|e| SwarmError::Internal {
             reason: format!(
                 "WASM binary not found (or inaccessible) at '{}': {e}",
@@ -234,7 +236,7 @@ impl WasmManifestFile {
     pub fn into_plugin_manifest(self) -> PluginManifest {
         let p = self.plugin;
         PluginManifest {
-            id: p.id.unwrap_or_else(PluginId::new),
+            id: p.id.unwrap_or_default(),
             name: p.name,
             version: p.version,
             author: p.author,
@@ -322,7 +324,10 @@ description = "Receives a message"
         assert_eq!(m.plugin.name, "Full Plugin");
         assert_eq!(m.plugin.capabilities.len(), 2);
         assert_eq!(m.plugin.actions.len(), 2);
-        assert_eq!(m.plugin.required_permissions, vec!["read:config", "create:task"]);
+        assert_eq!(
+            m.plugin.required_permissions,
+            vec!["read:config", "create:task"]
+        );
         assert_eq!(m.plugin.wasm_permissions.len(), 3);
         assert_eq!(
             m.plugin.wasm_permissions[0],
@@ -393,10 +398,13 @@ kind  = "Custom"
 value = "special-feature"
 "#;
         let m = WasmManifestFile::from_toml_str(toml).expect("should parse");
-        assert_eq!(m.plugin.wasm_permissions, vec![
-            WasmPermission::Network("localhost:8080".into()),
-            WasmPermission::FileWrite("/tmp/out".into()),
-            WasmPermission::Custom("special-feature".into()),
-        ]);
+        assert_eq!(
+            m.plugin.wasm_permissions,
+            vec![
+                WasmPermission::Network("localhost:8080".into()),
+                WasmPermission::FileWrite("/tmp/out".into()),
+                WasmPermission::Custom("special-feature".into()),
+            ]
+        );
     }
 }

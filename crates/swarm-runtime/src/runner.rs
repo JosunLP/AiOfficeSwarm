@@ -62,11 +62,10 @@ impl TaskRunner {
         // If this fails (e.g., wrong assigned agent), record the task as
         // failed and reset the agent so neither gets stuck.
         if let Err(start_err) = self.handle.record_task_started(task_id, agent_id) {
-            if let Err(record_err) = self.handle.record_task_failed(
-                task_id,
-                agent_id,
-                start_err.to_string(),
-            ) {
+            if let Err(record_err) =
+                self.handle
+                    .record_task_failed(task_id, agent_id, start_err.to_string())
+            {
                 tracing::error!(
                     task_id = %task_id,
                     agent_id = %agent_id,
@@ -78,7 +77,10 @@ impl TaskRunner {
         }
 
         match task.spec.timeout {
-            Some(timeout) => self.execute_with_timeout(task_id, agent_id, task, timeout).await,
+            Some(timeout) => {
+                self.execute_with_timeout(task_id, agent_id, task, timeout)
+                    .await
+            }
             None => self.execute_without_timeout(task_id, agent_id, task).await,
         }
     }
@@ -122,12 +124,14 @@ impl TaskRunner {
         match result {
             Ok(output) => {
                 self.circuit_breaker.record_success();
-                self.handle.record_task_completed(task_id, agent_id, output.clone())?;
+                self.handle
+                    .record_task_completed(task_id, agent_id, output.clone())?;
                 Ok(output)
             }
             Err(e) => {
                 self.circuit_breaker.record_failure();
-                self.handle.record_task_failed(task_id, agent_id, e.to_string())?;
+                self.handle
+                    .record_task_failed(task_id, agent_id, e.to_string())?;
                 Err(e)
             }
         }
@@ -137,8 +141,8 @@ impl TaskRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use async_trait::async_trait;
+    use std::time::Duration;
     use swarm_core::{
         agent::{AgentDescriptor, AgentKind},
         capability::CapabilitySet,
@@ -146,51 +150,76 @@ mod tests {
     };
     use swarm_orchestrator::Orchestrator;
 
-    struct OkAgent { descriptor: AgentDescriptor }
-    struct FailAgent { descriptor: AgentDescriptor }
-    struct SlowAgent { descriptor: AgentDescriptor }
-    struct VerySlowAgent { descriptor: AgentDescriptor }
+    struct OkAgent {
+        descriptor: AgentDescriptor,
+    }
+    struct FailAgent {
+        descriptor: AgentDescriptor,
+    }
+    struct SlowAgent {
+        descriptor: AgentDescriptor,
+    }
+    struct VerySlowAgent {
+        descriptor: AgentDescriptor,
+    }
 
     const VERY_SLOW_TASK_DURATION: Duration = Duration::from_secs(500);
 
     #[async_trait]
     impl Agent for OkAgent {
-        fn descriptor(&self) -> &AgentDescriptor { &self.descriptor }
+        fn descriptor(&self) -> &AgentDescriptor {
+            &self.descriptor
+        }
         async fn execute(&mut self, task: Task) -> SwarmResult<serde_json::Value> {
             Ok(task.spec.input.clone())
         }
-        async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
+        async fn health_check(&self) -> SwarmResult<()> {
+            Ok(())
+        }
     }
 
     #[async_trait]
     impl Agent for FailAgent {
-        fn descriptor(&self) -> &AgentDescriptor { &self.descriptor }
-        async fn execute(&mut self, _task: Task) -> SwarmResult<serde_json::Value> {
-            Err(SwarmError::Internal { reason: "agent failed".into() })
+        fn descriptor(&self) -> &AgentDescriptor {
+            &self.descriptor
         }
-        async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
+        async fn execute(&mut self, _task: Task) -> SwarmResult<serde_json::Value> {
+            Err(SwarmError::Internal {
+                reason: "agent failed".into(),
+            })
+        }
+        async fn health_check(&self) -> SwarmResult<()> {
+            Ok(())
+        }
     }
 
     #[async_trait]
     impl Agent for SlowAgent {
-        fn descriptor(&self) -> &AgentDescriptor { &self.descriptor }
+        fn descriptor(&self) -> &AgentDescriptor {
+            &self.descriptor
+        }
         async fn execute(&mut self, _task: Task) -> SwarmResult<serde_json::Value> {
             tokio::time::sleep(Duration::from_millis(50)).await;
             Ok(serde_json::json!({"slow": true}))
         }
-        async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
+        async fn health_check(&self) -> SwarmResult<()> {
+            Ok(())
+        }
     }
 
     #[async_trait]
     impl Agent for VerySlowAgent {
-        fn descriptor(&self) -> &AgentDescriptor { &self.descriptor }
+        fn descriptor(&self) -> &AgentDescriptor {
+            &self.descriptor
+        }
         async fn execute(&mut self, _task: Task) -> SwarmResult<serde_json::Value> {
             tokio::time::sleep(VERY_SLOW_TASK_DURATION).await;
             Ok(serde_json::json!({"slow": true}))
         }
-        async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
+        async fn health_check(&self) -> SwarmResult<()> {
+            Ok(())
+        }
     }
-
 
     #[tokio::test]
     async fn run_task_success() {
@@ -198,13 +227,17 @@ mod tests {
         let handle = orch.handle();
 
         let desc = AgentDescriptor::new("ok-worker", AgentKind::Worker, CapabilitySet::new());
-        let agent = OkAgent { descriptor: desc.clone() };
+        let agent = OkAgent {
+            descriptor: desc.clone(),
+        };
         let agent_id = desc.id;
 
         handle.register_agent(desc).unwrap();
         handle.set_agent_ready(agent_id).unwrap();
 
-        let task_id = handle.submit_task(TaskSpec::new("t", serde_json::json!({"x": 1}))).unwrap();
+        let task_id = handle
+            .submit_task(TaskSpec::new("t", serde_json::json!({"x": 1})))
+            .unwrap();
         handle.try_schedule_next().unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
@@ -223,13 +256,17 @@ mod tests {
         let handle = orch.handle();
 
         let desc = AgentDescriptor::new("fail-worker", AgentKind::Worker, CapabilitySet::new());
-        let agent = FailAgent { descriptor: desc.clone() };
+        let agent = FailAgent {
+            descriptor: desc.clone(),
+        };
         let agent_id = desc.id;
 
         handle.register_agent(desc).unwrap();
         handle.set_agent_ready(agent_id).unwrap();
 
-        let task_id = handle.submit_task(TaskSpec::new("t", serde_json::json!({}))).unwrap();
+        let task_id = handle
+            .submit_task(TaskSpec::new("t", serde_json::json!({})))
+            .unwrap();
         handle.try_schedule_next().unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
@@ -247,7 +284,9 @@ mod tests {
         let handle = orch.handle();
 
         let desc = AgentDescriptor::new("slow-worker", AgentKind::Worker, CapabilitySet::new());
-        let agent = SlowAgent { descriptor: desc.clone() };
+        let agent = SlowAgent {
+            descriptor: desc.clone(),
+        };
         let agent_id = desc.id;
 
         handle.register_agent(desc).unwrap();
@@ -275,8 +314,11 @@ mod tests {
         let orch = Orchestrator::new();
         let handle = orch.handle();
 
-        let desc = AgentDescriptor::new("very-slow-worker", AgentKind::Worker, CapabilitySet::new());
-        let agent = VerySlowAgent { descriptor: desc.clone() };
+        let desc =
+            AgentDescriptor::new("very-slow-worker", AgentKind::Worker, CapabilitySet::new());
+        let agent = VerySlowAgent {
+            descriptor: desc.clone(),
+        };
         let agent_id = desc.id;
 
         handle.register_agent(desc).unwrap();
@@ -312,13 +354,17 @@ mod tests {
         let handle = orch.handle();
 
         let desc = AgentDescriptor::new("ok-worker", AgentKind::Worker, CapabilitySet::new());
-        let agent = OkAgent { descriptor: desc.clone() };
+        let agent = OkAgent {
+            descriptor: desc.clone(),
+        };
         let agent_id = desc.id;
 
         handle.register_agent(desc).unwrap();
         handle.set_agent_ready(agent_id).unwrap();
 
-        let task_id = handle.submit_task(TaskSpec::new("t", serde_json::json!({"x": 1}))).unwrap();
+        let task_id = handle
+            .submit_task(TaskSpec::new("t", serde_json::json!({"x": 1})))
+            .unwrap();
         handle.try_schedule_next().unwrap();
 
         let task = handle.get_task(&task_id).unwrap();

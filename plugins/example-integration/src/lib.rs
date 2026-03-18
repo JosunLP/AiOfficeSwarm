@@ -46,8 +46,12 @@ impl NotificationPlugin {
             "AiOfficeSwarm Contributors",
             "Sends notifications to a configured channel",
         );
-        manifest.capabilities.push(PluginCapabilityKind::ActionProvider);
-        manifest.capabilities.push(PluginCapabilityKind::CommunicationChannel);
+        manifest
+            .capabilities
+            .push(PluginCapabilityKind::ActionProvider);
+        manifest
+            .capabilities
+            .push(PluginCapabilityKind::CommunicationChannel);
         manifest.actions.push(PluginAction {
             name: "send_notification".into(),
             description: "Send a notification message to the configured channel".into(),
@@ -125,12 +129,12 @@ impl Plugin for NotificationPlugin {
 
         match action {
             "send_notification" => {
-                let message = params["message"]
-                    .as_str()
-                    .ok_or_else(|| SwarmError::PluginOperationFailed {
+                let message = params["message"].as_str().ok_or_else(|| {
+                    SwarmError::PluginOperationFailed {
                         name: self.manifest.name.clone(),
                         reason: "missing 'message' parameter".into(),
-                    })?;
+                    }
+                })?;
                 let severity = params["severity"].as_str().unwrap_or("info");
 
                 tracing::info!(

@@ -21,7 +21,6 @@ pub type SwarmResult<T> = Result<T, SwarmError>;
 #[derive(Debug, Error)]
 pub enum SwarmError {
     // ── Agent errors ───────────────────────────────────────────────────────
-
     /// An agent with the given ID was not found in the registry.
     #[error("agent not found: {id}")]
     AgentNotFound { id: AgentId },
@@ -39,7 +38,6 @@ pub enum SwarmError {
     AgentResourceExceeded { id: AgentId, resource: String },
 
     // ── Task errors ────────────────────────────────────────────────────────
-
     /// A task with the given ID was not found.
     #[error("task not found: {id}")]
     TaskNotFound { id: TaskId },
@@ -57,7 +55,6 @@ pub enum SwarmError {
     TaskFailed { id: TaskId, reason: String },
 
     // ── Policy errors ──────────────────────────────────────────────────────
-
     /// A policy evaluation denied the requested action.
     #[error("policy {policy_id} denied action '{action}': {reason}")]
     PolicyViolation {
@@ -71,7 +68,6 @@ pub enum SwarmError {
     PolicyNotFound { id: PolicyId },
 
     // ── Authorization errors ───────────────────────────────────────────────
-
     /// The subject does not have the required permission.
     #[error("permission denied: subject '{subject}' lacks '{permission}' on '{resource}'")]
     PermissionDenied {
@@ -81,7 +77,6 @@ pub enum SwarmError {
     },
 
     // ── Plugin errors ──────────────────────────────────────────────────────
-
     /// A plugin failed to initialize.
     #[error("plugin '{name}' failed to initialize: {reason}")]
     PluginInitFailed { name: String, reason: String },
@@ -99,7 +94,6 @@ pub enum SwarmError {
     },
 
     // ── Configuration errors ───────────────────────────────────────────────
-
     /// A required configuration value is missing.
     #[error("missing configuration key: '{key}'")]
     ConfigMissing { key: String },
@@ -109,7 +103,6 @@ pub enum SwarmError {
     ConfigInvalid { key: String, reason: String },
 
     // ── Runtime / infrastructure errors ───────────────────────────────────
-
     /// A channel send/receive operation failed (typically means a component
     /// has shut down unexpectedly).
     #[error("channel communication failed: {reason}")]

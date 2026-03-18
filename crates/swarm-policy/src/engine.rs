@@ -75,7 +75,7 @@ impl PolicyEngine {
         let mut policies = self.policies.write().await;
         policies.push(policy);
         // Sort descending by priority so the highest-priority policy is first.
-        policies.sort_by(|a, b| b.priority().cmp(&a.priority()));
+        policies.sort_by_key(|policy| std::cmp::Reverse(policy.priority()));
         tracing::debug!("Policy registered; total policies: {}", policies.len());
     }
 
@@ -140,13 +140,11 @@ impl PolicyEngine {
     pub async fn enforce(&self, context: &PolicyContext) -> SwarmResult<()> {
         match self.evaluate(context).await? {
             PolicyDecision::Allowed => Ok(()),
-            PolicyDecision::Denied { policy_id, reason } => {
-                Err(SwarmError::PolicyViolation {
-                    policy_id,
-                    action: context.action.clone(),
-                    reason,
-                })
-            }
+            PolicyDecision::Denied { policy_id, reason } => Err(SwarmError::PolicyViolation {
+                policy_id,
+                action: context.action.clone(),
+                reason,
+            }),
         }
     }
 }
@@ -206,7 +204,9 @@ mod tests {
     #[tokio::test]
     async fn deny_all_policy_overrides_default() {
         let engine = PolicyEngine::allow_by_default();
-        engine.register(Arc::new(DenyAllPolicy::new("deny-all", "testing"))).await;
+        engine
+            .register(Arc::new(DenyAllPolicy::new("deny-all", "testing")))
+            .await;
         let ctx = PolicyContext::new("any-action", "anyone", "anything");
         let decision = engine.evaluate(&ctx).await.unwrap();
         assert!(decision.is_denied());
@@ -215,7 +215,9 @@ mod tests {
     #[tokio::test]
     async fn allow_all_policy_overrides_deny_default() {
         let engine = PolicyEngine::deny_by_default();
-        engine.register(Arc::new(AllowAllPolicy::new("allow-all"))).await;
+        engine
+            .register(Arc::new(AllowAllPolicy::new("allow-all")))
+            .await;
         let ctx = PolicyContext::new("any-action", "anyone", "anything");
         let decision = engine.evaluate(&ctx).await.unwrap();
         assert!(decision.is_allowed());
@@ -263,7 +265,9 @@ mod tests {
     #[tokio::test]
     async fn enforce_returns_error_on_deny() {
         let engine = PolicyEngine::allow_by_default();
-        engine.register(Arc::new(DenyAllPolicy::new("deny-all", "blocked"))).await;
+        engine
+            .register(Arc::new(DenyAllPolicy::new("deny-all", "blocked")))
+            .await;
         let ctx = PolicyContext::new("delete_agent", "user", "agent");
         assert!(engine.enforce(&ctx).await.is_err());
     }
@@ -299,7 +303,9 @@ mod tests {
         .expect("register should not wait for in-flight evaluation");
 
         let policies = engine.policies.read().await;
-        assert!(policies.iter().any(|policy| policy.name() == "allow-all-fast"));
+        assert!(policies
+            .iter()
+            .any(|policy| policy.name() == "allow-all-fast"));
         drop(policies);
 
         release.notify_one();

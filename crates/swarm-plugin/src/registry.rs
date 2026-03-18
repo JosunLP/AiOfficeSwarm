@@ -1,6 +1,6 @@
 //! Plugin registry: tracks all loaded plugins and their state.
 
-use dashmap::{DashMap, mapref::entry::Entry};
+use dashmap::{mapref::entry::Entry, DashMap};
 use std::sync::Arc;
 
 use swarm_core::{
@@ -8,10 +8,7 @@ use swarm_core::{
     identity::PluginId,
 };
 
-use crate::{
-    lifecycle::PluginState,
-    manifest::PluginManifest,
-};
+use crate::{lifecycle::PluginState, manifest::PluginManifest};
 
 /// A record combining a plugin's manifest with its live state.
 #[derive(Debug, Clone)]
@@ -56,9 +53,12 @@ impl PluginRegistry {
 
     /// Update the state of a registered plugin.
     pub fn update_state(&self, id: &PluginId, state: PluginState) -> SwarmResult<()> {
-        let mut record = self.plugins.get_mut(id).ok_or_else(|| SwarmError::Internal {
-            reason: format!("plugin {} not found in registry", id),
-        })?;
+        let mut record = self
+            .plugins
+            .get_mut(id)
+            .ok_or_else(|| SwarmError::Internal {
+                reason: format!("plugin {} not found in registry", id),
+            })?;
         record.state = state;
         Ok(())
     }
@@ -84,9 +84,12 @@ impl PluginRegistry {
 
     /// Deregister a plugin.
     pub fn deregister(&self, id: &PluginId) -> SwarmResult<()> {
-        self.plugins.remove(id).map(|_| ()).ok_or_else(|| SwarmError::Internal {
-            reason: format!("plugin {} not found", id),
-        })
+        self.plugins
+            .remove(id)
+            .map(|_| ())
+            .ok_or_else(|| SwarmError::Internal {
+                reason: format!("plugin {} not found", id),
+            })
     }
 }
 

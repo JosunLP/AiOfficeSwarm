@@ -94,7 +94,10 @@ pub struct ActionAllowlistPolicy {
 
 impl ActionAllowlistPolicy {
     /// Create a policy allowing the specified actions.
-    pub fn new(name: impl Into<String>, actions: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        actions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         Self {
             id: PolicyId::new(),
             name: name.into(),

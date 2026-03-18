@@ -106,7 +106,11 @@ impl DataAnalysisAgent {
 
 fn summarize_values(values: &[f64]) -> (f64, f64, Option<f64>, Option<f64>) {
     let sum: f64 = values.iter().sum();
-    let mean = if values.is_empty() { 0.0 } else { sum / values.len() as f64 };
+    let mean = if values.is_empty() {
+        0.0
+    } else {
+        sum / values.len() as f64
+    };
     let max = values.iter().copied().reduce(f64::max);
     let min = values.iter().copied().reduce(f64::min);
     (sum, mean, max, min)
@@ -155,31 +159,6 @@ impl Agent for DataAnalysisAgent {
 
     async fn health_check(&self) -> SwarmResult<()> {
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::summarize_values;
-
-    #[test]
-    fn summarize_values_returns_nullish_bounds_for_empty_input() {
-        let (sum, mean, max, min) = summarize_values(&[]);
-
-        assert_eq!(sum, 0.0);
-        assert_eq!(mean, 0.0);
-        assert_eq!(max, None);
-        assert_eq!(min, None);
-    }
-
-    #[test]
-    fn summarize_values_reports_numeric_bounds_for_non_empty_input() {
-        let (sum, mean, max, min) = summarize_values(&[1.0, 4.0, 2.0]);
-
-        assert_eq!(sum, 7.0);
-        assert!((mean - (7.0 / 3.0)).abs() < 1e-12);
-        assert_eq!(max, Some(4.0));
-        assert_eq!(min, Some(1.0));
     }
 }
 
@@ -313,7 +292,9 @@ async fn main() -> anyhow::Result<()> {
     println!("── Plugin Demonstration ────────────────────────");
     let plugin_host = PluginHost::new();
     let plugin_id = plugin_host
-        .load(Box::new(example_integration::NotificationPlugin::new("#ops-alerts")))
+        .load(Box::new(example_integration::NotificationPlugin::new(
+            "#ops-alerts",
+        )))
         .await?;
 
     enforce_policy_check(&policy_engine, "invoke_plugin", plugin_id.to_string()).await?;
@@ -346,4 +327,29 @@ async fn main() -> anyhow::Result<()> {
     println!("\nAll done! ✓");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::summarize_values;
+
+    #[test]
+    fn summarize_values_returns_nullish_bounds_for_empty_input() {
+        let (sum, mean, max, min) = summarize_values(&[]);
+
+        assert_eq!(sum, 0.0);
+        assert_eq!(mean, 0.0);
+        assert_eq!(max, None);
+        assert_eq!(min, None);
+    }
+
+    #[test]
+    fn summarize_values_reports_numeric_bounds_for_non_empty_input() {
+        let (sum, mean, max, min) = summarize_values(&[1.0, 4.0, 2.0]);
+
+        assert_eq!(sum, 7.0);
+        assert!((mean - (7.0 / 3.0)).abs() < 1e-12);
+        assert_eq!(max, Some(4.0));
+        assert_eq!(min, Some(1.0));
+    }
 }

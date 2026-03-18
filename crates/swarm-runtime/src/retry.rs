@@ -19,13 +19,19 @@ pub struct RetryExecutor {
 impl RetryExecutor {
     /// Create an executor using the given policy, with jitter enabled.
     pub fn new(policy: RetryPolicy) -> Self {
-        Self { policy, jitter: true }
+        Self {
+            policy,
+            jitter: true,
+        }
     }
 
     /// Create an executor with jitter disabled (useful in tests for
     /// deterministic timing).
     pub fn without_jitter(policy: RetryPolicy) -> Self {
-        Self { policy, jitter: false }
+        Self {
+            policy,
+            jitter: false,
+        }
     }
 
     fn delay_before_retry(&self, attempt: u32) -> Duration {
@@ -82,8 +88,8 @@ fn add_jitter(duration: Duration) -> Duration {
 mod tests {
     use super::*;
     use swarm_core::error::SwarmError;
-    use swarm_core::types::{RetryPolicy, RetryStrategy};
     use swarm_core::identity::TaskId;
+    use swarm_core::types::{RetryPolicy, RetryStrategy};
 
     fn no_retry_policy() -> RetryPolicy {
         RetryPolicy::no_retry()
@@ -101,7 +107,9 @@ mod tests {
     #[tokio::test]
     async fn succeeds_on_first_attempt() {
         let executor = RetryExecutor::without_jitter(no_retry_policy());
-        let result = executor.execute(|| async { Ok::<i32, SwarmError>(42) }).await;
+        let result = executor
+            .execute(|| async { Ok::<i32, SwarmError>(42) })
+            .await;
         assert_eq!(result.unwrap(), 42);
     }
 
@@ -109,16 +117,18 @@ mod tests {
     async fn does_not_retry_non_retryable_error() {
         let executor = RetryExecutor::without_jitter(fast_retry_policy());
         let mut calls = 0u32;
-        let result = executor.execute(|| {
-            calls += 1;
-            async {
-                Err::<i32, SwarmError>(SwarmError::PolicyViolation {
-                    policy_id: swarm_core::identity::PolicyId::new(),
-                    action: "test".into(),
-                    reason: "blocked".into(),
-                })
-            }
-        }).await;
+        let result = executor
+            .execute(|| {
+                calls += 1;
+                async {
+                    Err::<i32, SwarmError>(SwarmError::PolicyViolation {
+                        policy_id: swarm_core::identity::PolicyId::new(),
+                        action: "test".into(),
+                        reason: "blocked".into(),
+                    })
+                }
+            })
+            .await;
         assert!(result.is_err());
         assert_eq!(calls, 1, "Non-retryable errors must not be retried");
     }
@@ -127,20 +137,22 @@ mod tests {
     async fn retries_transient_errors() {
         let executor = RetryExecutor::without_jitter(fast_retry_policy());
         let mut calls = 0u32;
-        let result = executor.execute(|| {
-            calls += 1;
-            let c = calls;
-            async move {
-                if c < 3 {
-                    Err::<i32, SwarmError>(SwarmError::TaskTimeout {
-                        id: TaskId::new(),
-                        elapsed_ms: 100,
-                    })
-                } else {
-                    Ok(99)
+        let result = executor
+            .execute(|| {
+                calls += 1;
+                let c = calls;
+                async move {
+                    if c < 3 {
+                        Err::<i32, SwarmError>(SwarmError::TaskTimeout {
+                            id: TaskId::new(),
+                            elapsed_ms: 100,
+                        })
+                    } else {
+                        Ok(99)
+                    }
                 }
-            }
-        }).await;
+            })
+            .await;
         assert_eq!(result.unwrap(), 99);
         assert_eq!(calls, 3);
     }

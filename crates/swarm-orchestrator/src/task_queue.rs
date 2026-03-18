@@ -79,7 +79,10 @@ impl TaskQueue {
         let sequence = inner.next_sequence;
         inner.next_sequence += 1;
         let key = (priority_key, enqueued_at, sequence);
-        let entry = QueueEntry { task: task.clone(), enqueued_at };
+        let entry = QueueEntry {
+            task: task.clone(),
+            enqueued_at,
+        };
         inner.queue.insert(key, entry);
         inner.index.insert(task.id, key);
         Ok(())
@@ -109,12 +112,12 @@ impl TaskQueue {
         let key = inner
             .index
             .remove(task_id)
-            .ok_or_else(|| SwarmError::TaskNotFound { id: *task_id })?;
+            .ok_or(SwarmError::TaskNotFound { id: *task_id })?;
         inner
             .queue
             .remove(&key)
             .map(|e| e.task)
-            .ok_or_else(|| SwarmError::TaskNotFound { id: *task_id })
+            .ok_or(SwarmError::TaskNotFound { id: *task_id })
     }
 
     /// Return the number of tasks currently in the queue.
@@ -194,7 +197,9 @@ mod tests {
         let id = task.id;
 
         queue.enqueue(task).unwrap();
-        let err = queue.enqueue(duplicate).expect_err("duplicate task ID should be rejected");
+        let err = queue
+            .enqueue(duplicate)
+            .expect_err("duplicate task ID should be rejected");
 
         assert!(matches!(err, SwarmError::InvalidTaskSpec { .. }));
         assert_eq!(queue.len(), 1);

@@ -33,7 +33,10 @@ pub async fn run(args: TaskArgs, _config: &SwarmConfig) -> anyhow::Result<()> {
         TaskSubcommand::Submit { name, input } => {
             let payload: serde_json::Value = serde_json::from_str(&input)
                 .map_err(|e| anyhow::anyhow!("Invalid JSON input: {}", e))?;
-            println!("Task '{}' would be submitted with payload: {}", name, payload);
+            println!(
+                "Task '{}' would be submitted with payload: {}",
+                name, payload
+            );
             println!("(connect to a running swarm instance for actual submission)");
         }
     }

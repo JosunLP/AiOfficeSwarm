@@ -27,7 +27,7 @@ pub mod supervision;
 pub mod task_queue;
 
 pub use orchestrator::{Orchestrator, OrchestratorConfig, OrchestratorHandle};
-pub use registry::{AgentRegistry, AgentRecord};
-pub use scheduler::{SchedulingDecision, Scheduler};
+pub use registry::{AgentRecord, AgentRegistry};
+pub use scheduler::{Scheduler, SchedulingDecision};
 pub use supervision::SupervisionManager;
 pub use task_queue::TaskQueue;

@@ -46,8 +46,7 @@ impl SupervisionManager {
     /// Register an agent as a root node (no supervisor).
     pub fn register_root(&self, agent_id: AgentId) {
         let _guard = self.lock_mutation();
-        self.nodes
-            .insert(agent_id, SupervisionTree::root(agent_id));
+        self.nodes.insert(agent_id, SupervisionTree::root(agent_id));
     }
 
     /// Register an agent under a supervisor.
@@ -55,11 +54,7 @@ impl SupervisionManager {
     /// Both the subordinate and the supervisor must already be registered.
     /// If the subordinate was previously a root node or supervised by a
     /// different agent, it is re-parented under `supervisor_id`.
-    pub fn register_under(
-        &self,
-        agent_id: AgentId,
-        supervisor_id: AgentId,
-    ) -> SwarmResult<()> {
+    pub fn register_under(&self, agent_id: AgentId, supervisor_id: AgentId) -> SwarmResult<()> {
         let _guard = self.lock_mutation();
 
         if agent_id == supervisor_id {
@@ -79,16 +74,18 @@ impl SupervisionManager {
 
         if let Some(old_supervisor_id) = previous_supervisor {
             if old_supervisor_id != supervisor_id {
-                let mut old_supervisor_node = self
-                    .nodes
-                    .get_mut(&old_supervisor_id)
-                    .ok_or_else(|| SwarmError::Internal {
-                        reason: format!(
+                let mut old_supervisor_node =
+                    self.nodes
+                        .get_mut(&old_supervisor_id)
+                        .ok_or_else(|| SwarmError::Internal {
+                            reason: format!(
                             "agent {} had missing previous supervisor {} while being re-parented",
                             agent_id, old_supervisor_id
                         ),
-                    })?;
-                old_supervisor_node.subordinates.retain(|id| id != &agent_id);
+                        })?;
+                old_supervisor_node
+                    .subordinates
+                    .retain(|id| id != &agent_id);
             }
         }
 
@@ -132,9 +129,7 @@ impl SupervisionManager {
 
     /// Return the supervisor of `agent_id`, if any.
     pub fn supervisor_of(&self, agent_id: &AgentId) -> Option<AgentId> {
-        self.nodes
-            .get(agent_id)
-            .and_then(|n| n.supervisor)
+        self.nodes.get(agent_id).and_then(|n| n.supervisor)
     }
 
     /// Return the subordinates of `agent_id`.

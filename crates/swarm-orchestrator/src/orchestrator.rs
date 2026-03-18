@@ -18,7 +18,7 @@ use swarm_core::{
 
 use crate::{
     registry::AgentRegistry,
-    scheduler::{SchedulingDecision, Scheduler},
+    scheduler::{Scheduler, SchedulingDecision},
     supervision::SupervisionManager,
     task_queue::TaskQueue,
 };
@@ -145,9 +145,7 @@ impl OrchestratorHandle {
     /// Mark an agent as ready to receive tasks.
     pub fn set_agent_ready(&self, id: AgentId) -> SwarmResult<()> {
         let previous = self.state.registry.get(&id)?.status.label().to_string();
-        self.state
-            .registry
-            .update_status(&id, AgentStatus::Ready)?;
+        self.state.registry.update_status(&id, AgentStatus::Ready)?;
         self.state.emit(EventKind::AgentStatusChanged {
             agent_id: id,
             previous,
@@ -161,17 +159,14 @@ impl OrchestratorHandle {
     pub fn deregister_agent(&self, id: AgentId) -> SwarmResult<()> {
         self.state.registry.deregister(&id)?;
         self.state.supervision.deregister(&id);
-        self.state.emit(EventKind::AgentDeregistered { agent_id: id });
+        self.state
+            .emit(EventKind::AgentDeregistered { agent_id: id });
         tracing::info!(agent_id = %id, "Agent deregistered");
         Ok(())
     }
 
     /// Register an agent under a supervisor in the supervision tree.
-    pub fn set_supervisor(
-        &self,
-        agent_id: AgentId,
-        supervisor_id: AgentId,
-    ) -> SwarmResult<()> {
+    pub fn set_supervisor(&self, agent_id: AgentId, supervisor_id: AgentId) -> SwarmResult<()> {
         self.state
             .supervision
             .register_under(agent_id, supervisor_id)
@@ -220,15 +215,20 @@ impl OrchestratorHandle {
                     .tasks
                     .get_mut(&task_id)
                     .ok_or(SwarmError::TaskNotFound { id: task_id })?;
-                t.schedule(agent_id).map_err(|s| SwarmError::AgentInvalidState {
-                    id: agent_id,
-                    reason: format!("task in state {}", s.label()),
-                })?;
+                t.schedule(agent_id)
+                    .map_err(|s| SwarmError::AgentInvalidState {
+                        id: agent_id,
+                        reason: format!("task in state {}", s.label()),
+                    })?;
                 // Mark agent as busy.
+                self.state.registry.update_status(
+                    &agent_id,
+                    AgentStatus::Busy {
+                        current_task: task_id,
+                    },
+                )?;
                 self.state
-                    .registry
-                    .update_status(&agent_id, AgentStatus::Busy { current_task: task_id })?;
-                self.state.emit(EventKind::TaskScheduled { task_id, agent_id });
+                    .emit(EventKind::TaskScheduled { task_id, agent_id });
                 tracing::info!(task_id = %task_id, agent_id = %agent_id, "Task scheduled");
                 Ok(Some(task_id))
             }
@@ -243,11 +243,13 @@ impl OrchestratorHandle {
             .tasks
             .get_mut(&task_id)
             .ok_or(SwarmError::TaskNotFound { id: task_id })?;
-        t.start_running(agent_id).map_err(|s| SwarmError::AgentInvalidState {
-            id: agent_id,
-            reason: format!("task in state {}", s.label()),
-        })?;
-        self.state.emit(EventKind::TaskStarted { task_id, agent_id });
+        t.start_running(agent_id)
+            .map_err(|s| SwarmError::AgentInvalidState {
+                id: agent_id,
+                reason: format!("task in state {}", s.label()),
+            })?;
+        self.state
+            .emit(EventKind::TaskStarted { task_id, agent_id });
         Ok(())
     }
 
@@ -338,7 +340,7 @@ impl OrchestratorHandle {
             .tasks
             .get(task_id)
             .map(|t| t.clone())
-            .ok_or_else(|| SwarmError::TaskNotFound { id: *task_id })
+            .ok_or(SwarmError::TaskNotFound { id: *task_id })
     }
 
     /// Return the current number of pending tasks in the queue.
@@ -394,7 +396,9 @@ mod tests {
         assert_eq!(handle.pending_task_count(), 0);
 
         let task = handle.get_task(&task_id).unwrap();
-        assert!(matches!(task.status, TaskStatus::Scheduled { assigned_to } if assigned_to == agent_id));
+        assert!(
+            matches!(task.status, TaskStatus::Scheduled { assigned_to } if assigned_to == agent_id)
+        );
     }
 
     #[test]
@@ -424,10 +428,14 @@ mod tests {
     fn full_task_lifecycle() {
         let (handle, agent_id) = orchestrator_with_ready_worker();
 
-        let task_id = handle.submit_task(TaskSpec::new("t", serde_json::json!({}))).unwrap();
+        let task_id = handle
+            .submit_task(TaskSpec::new("t", serde_json::json!({})))
+            .unwrap();
         handle.try_schedule_next().unwrap();
         handle.record_task_started(task_id, agent_id).unwrap();
-        handle.record_task_completed(task_id, agent_id, serde_json::json!({"done": true})).unwrap();
+        handle
+            .record_task_completed(task_id, agent_id, serde_json::json!({"done": true}))
+            .unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         assert!(task.status.is_terminal());
@@ -454,7 +462,12 @@ mod tests {
 
         loop {
             let event = rx.try_recv().unwrap();
-            if let EventKind::AgentStatusChanged { agent_id: event_agent, previous, current } = event.kind {
+            if let EventKind::AgentStatusChanged {
+                agent_id: event_agent,
+                previous,
+                current,
+            } = event.kind
+            {
                 assert_eq!(event_agent, agent_id);
                 assert_eq!(previous, "inactive");
                 assert_eq!(current, "ready");
