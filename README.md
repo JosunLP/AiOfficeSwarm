@@ -46,7 +46,7 @@ cargo test --workspace
 
 ## Installation
 
-The first planned public release is `v0.1.0`.
+The first public release is `v0.1.0`.
 The examples below show both **latest** and a **pinned version**.
 
 ### Linux / macOS
