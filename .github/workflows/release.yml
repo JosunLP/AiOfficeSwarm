@@ -41,6 +41,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref_name }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -93,6 +95,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref_name }}
 
       - name: Download packaged assets
         uses: actions/download-artifact@v4
@@ -111,7 +115,7 @@ jobs:
         with:
           name: Release ${{ inputs.release_tag || github.ref_name }}
           tag_name: ${{ inputs.release_tag || github.ref_name }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ inputs.release_tag || github.ref_name }}
           generate_release_notes: true
           files: |
             dist/*
