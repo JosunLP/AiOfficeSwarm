@@ -27,7 +27,8 @@ function Normalize-PathEntry {
         $normalizedPath = $expandedPath
     }
 
-    if ($normalizedPath.Length -gt 3) {
+    $pathRoot = [System.IO.Path]::GetPathRoot($normalizedPath)
+    if ($pathRoot -and -not $normalizedPath.Equals($pathRoot, [System.StringComparison]::Ordinal)) {
         $normalizedPath = $normalizedPath.TrimEnd('\', '/')
     }
 
