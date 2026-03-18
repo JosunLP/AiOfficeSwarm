@@ -243,6 +243,13 @@ fn extract_tar_gz_archive(archive_path: &Path, extract_dir: &Path) -> anyhow::Re
                 entry_path.display()
             )
         })?;
+        validate_tar_entry_type(entry.header().entry_type()).with_context(|| {
+            format!(
+                "Archive '{}' contains an unsupported entry type for '{}'",
+                archive_path.display(),
+                entry_path.display()
+            )
+        })?;
 
         let unpacked = entry.unpack_in(extract_dir).with_context(|| {
             format!(
@@ -323,6 +330,14 @@ fn validate_relative_archive_path(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn validate_tar_entry_type(entry_type: tar::EntryType) -> anyhow::Result<()> {
+    if entry_type.is_file() || entry_type.is_dir() {
+        return Ok(());
+    }
+
+    bail!("tar entry type is not supported for self-update extraction")
+}
+
 fn current_target_triple() -> anyhow::Result<&'static str> {
     supported_target_triple(OS, ARCH)
 }
@@ -390,7 +405,7 @@ fn compare_versions(left: &str, right: &str) -> Option<Ordering> {
 mod tests {
     use super::{
         asset_name_for_target, compare_versions, normalize_tag, normalize_version,
-        supported_target_triple, validate_relative_archive_path,
+        supported_target_triple, validate_relative_archive_path, validate_tar_entry_type,
     };
     use std::{cmp::Ordering, path::Path};
 
@@ -437,5 +452,13 @@ mod tests {
         assert!(validate_relative_archive_path(Path::new("nested/swarm")).is_ok());
         assert!(validate_relative_archive_path(Path::new("../swarm")).is_err());
         assert!(validate_relative_archive_path(Path::new("/tmp/swarm")).is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_tar_entry_types() {
+        assert!(validate_tar_entry_type(tar::EntryType::new(b'0')).is_ok());
+        assert!(validate_tar_entry_type(tar::EntryType::new(b'5')).is_ok());
+        assert!(validate_tar_entry_type(tar::EntryType::new(b'2')).is_err());
+        assert!(validate_tar_entry_type(tar::EntryType::new(b'1')).is_err());
     }
 }

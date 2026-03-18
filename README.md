@@ -51,8 +51,8 @@ Die Beispiele unten zeigen sowohl **latest** als auch eine **fest gepinnte Versi
 
 ### Linux / macOS
 
-Published installable binaries currently cover Linux x86_64 and macOS on both
-Intel and Apple Silicon.
+Derzeit veröffentlichte Installations-Binaries decken Linux x86_64 sowie
+macOS auf Intel- und Apple-Silicon-Systemen ab.
 
 **Schnellstart (neueste Version)**
 
@@ -75,7 +75,7 @@ rm install-swarm.sh
 
 ### Windows (PowerShell)
 
-Published installable binaries currently cover Windows x86_64.
+Derzeit veröffentlichte Installations-Binaries decken Windows x86_64 ab.
 
 **Schnellstart (neueste Version)**
 
