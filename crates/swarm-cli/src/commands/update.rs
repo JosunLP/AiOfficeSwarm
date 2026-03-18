@@ -49,9 +49,24 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
     let release = fetch_release(args.version.as_deref()).await?;
     let current_version = env!("CARGO_PKG_VERSION");
     let release_version = normalize_version(&release.tag_name);
+    let version_comparison = compare_versions(&release.tag_name, current_version);
+
+    if args.check {
+        println!(
+            "{}",
+            format_check_report(
+                current_version,
+                release_version,
+                &release.html_url,
+                &release.tag_name,
+                version_comparison,
+            )
+        );
+        return Ok(());
+    }
 
     if args.version.is_none() {
-        match compare_versions(&release.tag_name, current_version) {
+        match version_comparison {
             Some(Ordering::Equal) => {
                 println!("swarm is already up to date (version {}).", current_version);
                 return Ok(());
@@ -65,19 +80,6 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
             }
             _ => {}
         }
-    }
-
-    if args.check {
-        println!(
-            "Current version: {}\nAvailable version: {}\nRelease: {}",
-            current_version, release_version, release.html_url
-        );
-        if compare_versions(&release.tag_name, current_version) == Some(Ordering::Greater) {
-            println!("An update is available.");
-        } else {
-            println!("No update required.");
-        }
-        return Ok(());
     }
 
     let target = current_target_triple()?;
@@ -403,15 +405,21 @@ fn executable_name() -> &'static str {
 }
 
 fn normalize_version(version: &str) -> &str {
-    version.trim().trim_start_matches('v')
+    let trimmed = version.trim();
+    match trimmed.strip_prefix('v') {
+        Some(stripped) if Version::parse(stripped).is_ok() => stripped,
+        _ => trimmed,
+    }
 }
 
 fn normalize_tag(version: &str) -> String {
     let trimmed = version.trim();
     if trimmed.starts_with('v') {
         trimmed.to_owned()
-    } else {
+    } else if Version::parse(trimmed).is_ok() {
         format!("v{trimmed}")
+    } else {
+        trimmed.to_owned()
     }
 }
 
@@ -425,11 +433,37 @@ fn compare_versions(left: &str, right: &str) -> Option<Ordering> {
     }
 }
 
+fn format_check_report(
+    current_version: &str,
+    release_version: &str,
+    release_url: &str,
+    release_tag: &str,
+    version_comparison: Option<Ordering>,
+) -> String {
+    let status = match version_comparison {
+        Some(Ordering::Greater) => "An update is available.",
+        Some(Ordering::Equal) => "No update required.",
+        Some(Ordering::Less) => {
+            "No update required: the running build is newer than the latest published release."
+        }
+        None => return format!(
+            "Current version: {}\nAvailable version: {}\nRelease: {}\nUnable to compare versions automatically for release tag '{}'. Try `swarm update --version {}` to target that release explicitly.",
+            current_version, release_version, release_url, release_tag, release_tag
+        ),
+    };
+
+    format!(
+        "Current version: {}\nAvailable version: {}\nRelease: {}\n{}",
+        current_version, release_version, release_url, status
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        asset_name_for_target, compare_versions, normalize_tag, normalize_version,
-        supported_target_triple, validate_relative_archive_path, validate_tar_entry_type,
+        asset_name_for_target, compare_versions, format_check_report, normalize_tag,
+        normalize_version, supported_target_triple, validate_relative_archive_path,
+        validate_tar_entry_type,
     };
     use std::{cmp::Ordering, path::Path};
 
@@ -437,8 +471,10 @@ mod tests {
     fn normalizes_versions_and_tags() {
         assert_eq!(normalize_version("v0.2.1"), "0.2.1");
         assert_eq!(normalize_version("0.2.1"), "0.2.1");
+        assert_eq!(normalize_version("vnext"), "vnext");
         assert_eq!(normalize_tag("0.2.1"), "v0.2.1");
         assert_eq!(normalize_tag("v0.2.1"), "v0.2.1");
+        assert_eq!(normalize_tag("release-2026-03-18"), "release-2026-03-18");
     }
 
     #[test]
@@ -446,6 +482,60 @@ mod tests {
         assert_eq!(compare_versions("v1.2.0", "1.1.9"), Some(Ordering::Greater));
         assert_eq!(compare_versions("v1.2.0", "1.2.0"), Some(Ordering::Equal));
         assert_eq!(compare_versions("1.1.9", "v1.2.0"), Some(Ordering::Less));
+    }
+
+    #[test]
+    fn formats_check_report_for_all_version_states() {
+        assert_eq!(
+            format_check_report(
+                "1.0.0",
+                "1.2.0",
+                "https://example.invalid/releases/v1.2.0",
+                "v1.2.0",
+                Some(Ordering::Greater)
+            ),
+            "Current version: 1.0.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nAn update is available."
+        );
+        assert_eq!(
+            format_check_report(
+                "1.2.0",
+                "1.2.0",
+                "https://example.invalid/releases/v1.2.0",
+                "v1.2.0",
+                Some(Ordering::Equal)
+            ),
+            "Current version: 1.2.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nNo update required."
+        );
+        assert_eq!(
+            format_check_report(
+                "1.3.0",
+                "1.2.0",
+                "https://example.invalid/releases/v1.2.0",
+                "v1.2.0",
+                Some(Ordering::Less)
+            ),
+            "Current version: 1.3.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nNo update required: the running build is newer than the latest published release."
+        );
+        assert_eq!(
+            format_check_report(
+                "1.0.0",
+                "vnext",
+                "https://example.invalid/releases/vnext",
+                "vnext",
+                None
+            ),
+            "Current version: 1.0.0\nAvailable version: vnext\nRelease: https://example.invalid/releases/vnext\nUnable to compare versions automatically for release tag 'vnext'. Try `swarm update --version vnext` to target that release explicitly."
+        );
+        assert_eq!(
+            format_check_report(
+                "1.0.0",
+                "not-a-semver-tag",
+                "https://example.invalid/releases/not-a-semver-tag",
+                "not-a-semver-tag",
+                None
+            ),
+            "Current version: 1.0.0\nAvailable version: not-a-semver-tag\nRelease: https://example.invalid/releases/not-a-semver-tag\nUnable to compare versions automatically for release tag 'not-a-semver-tag'. Try `swarm update --version not-a-semver-tag` to target that release explicitly."
+        );
     }
 
     #[test]
