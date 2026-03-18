@@ -60,7 +60,7 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
                 &release.html_url,
                 &release.tag_name,
                 version_comparison,
-            )?
+            )
         );
         return Ok(());
     }
@@ -433,23 +433,23 @@ fn format_check_report(
     release_url: &str,
     release_tag: &str,
     version_comparison: Option<Ordering>,
-) -> anyhow::Result<String> {
+) -> String {
     let status = match version_comparison {
         Some(Ordering::Greater) => "An update is available.",
-        Some(Ordering::Equal | Ordering::Less) => "No update required.",
-        None => {
-            bail!(
-                "Unable to compare the running version '{}' with release tag '{}'.",
-                current_version,
-                release_tag
-            );
+        Some(Ordering::Equal) => "No update required.",
+        Some(Ordering::Less) => {
+            "No update required: the running build is newer than the latest published release."
         }
+        None => return format!(
+            "Current version: {}\nAvailable version: {}\nRelease: {}\nUnable to compare versions automatically for release tag '{}'. Try `swarm update --version {}` to target that release explicitly.",
+            current_version, release_version, release_url, release_tag, release_tag
+        ),
     };
 
-    Ok(format!(
+    format!(
         "Current version: {}\nAvailable version: {}\nRelease: {}\n{}",
         current_version, release_version, release_url, status
-    ))
+    )
 }
 
 #[cfg(test)]
@@ -485,8 +485,7 @@ mod tests {
                 "https://example.invalid/releases/v1.2.0",
                 "v1.2.0",
                 Some(Ordering::Greater)
-            )
-            .unwrap(),
+            ),
             "Current version: 1.0.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nAn update is available."
         );
         assert_eq!(
@@ -496,8 +495,7 @@ mod tests {
                 "https://example.invalid/releases/v1.2.0",
                 "v1.2.0",
                 Some(Ordering::Equal)
-            )
-            .unwrap(),
+            ),
             "Current version: 1.2.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nNo update required."
         );
         assert_eq!(
@@ -507,9 +505,8 @@ mod tests {
                 "https://example.invalid/releases/v1.2.0",
                 "v1.2.0",
                 Some(Ordering::Less)
-            )
-            .unwrap(),
-            "Current version: 1.3.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nNo update required."
+            ),
+            "Current version: 1.3.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nNo update required: the running build is newer than the latest published release."
         );
         assert_eq!(
             format_check_report(
@@ -518,10 +515,8 @@ mod tests {
                 "https://example.invalid/releases/not-a-semver-tag",
                 "not-a-semver-tag",
                 None
-            )
-            .unwrap_err()
-            .to_string(),
-            "Unable to compare the running version '1.0.0' with release tag 'not-a-semver-tag'."
+            ),
+            "Current version: 1.0.0\nAvailable version: not-a-semver-tag\nRelease: https://example.invalid/releases/not-a-semver-tag\nUnable to compare versions automatically for release tag 'not-a-semver-tag'. Try `swarm update --version not-a-semver-tag` to target that release explicitly."
         );
     }
 

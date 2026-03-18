@@ -93,7 +93,7 @@ case "$DOWNLOAD_TOOL" in
     curl -fsSL "$DOWNLOAD_URL" -o "$ARCHIVE_PATH"
     ;;
   wget)
-    wget -qO "$ARCHIVE_PATH" "$DOWNLOAD_URL"
+    wget -q -O "$ARCHIVE_PATH" "$DOWNLOAD_URL"
     ;;
   *)
     fail "Unknown download command"
