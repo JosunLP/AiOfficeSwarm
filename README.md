@@ -46,8 +46,10 @@ cargo test --workspace
 
 ## Installation
 
-The first public release is `v0.1.0`.
-The examples below show both **latest** and a **pinned version**.
+The planned first public release tag is `v0.1.0`.
+The examples below show both **latest** and a **pinned version**. Replace
+`vX.Y.Z` with a published release tag when installing or updating a specific
+version.
 
 ### Linux / macOS
 
@@ -68,8 +70,8 @@ Use `SWARM_INSTALL_DIR=/my/path` to override the destination directory.
 **Install a specific version**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/v0.1.0/scripts/install.sh -o install-swarm.sh
-sh install-swarm.sh v0.1.0
+curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/vX.Y.Z/scripts/install.sh -o install-swarm.sh
+sh install-swarm.sh vX.Y.Z
 rm install-swarm.sh
 ```
 
@@ -81,7 +83,7 @@ Published installer binaries currently cover Windows x86_64.
 
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.ps1 -OutFile install-swarm.ps1
-.\install-swarm.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-swarm.ps1
 Remove-Item .\install-swarm.ps1
 ```
 
@@ -90,8 +92,8 @@ Installs `swarm.exe` to `%LOCALAPPDATA%\AiOfficeSwarm\bin` by default.
 **Install a specific version**
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/v0.1.0/scripts/install.ps1 -OutFile install-swarm.ps1
-.\install-swarm.ps1 -Version v0.1.0
+Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/vX.Y.Z/scripts/install.ps1 -OutFile install-swarm.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-swarm.ps1 -Version vX.Y.Z
 Remove-Item .\install-swarm.ps1
 ```
 
@@ -109,7 +111,7 @@ After installation, the CLI can update itself:
 ```bash
 swarm update
 swarm update --check
-swarm update --version v0.1.0
+swarm update --version vX.Y.Z
 ```
 
 ### Uninstall
@@ -126,7 +128,7 @@ swarm update --version v0.1.0
 
     ```powershell
     Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/uninstall.ps1 -OutFile uninstall-swarm.ps1
-    .\uninstall-swarm.ps1
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall-swarm.ps1
     Remove-Item .\uninstall-swarm.ps1
     ```
 

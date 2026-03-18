@@ -5,6 +5,42 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$pathUtilsPath = Join-Path $PSScriptRoot 'path-utils.ps1'
+if (Test-Path $pathUtilsPath) {
+    . $pathUtilsPath
+}
+
+# Keep this fallback in sync with scripts/path-utils.ps1 for one-file downloads.
+if (-not (Get-Command Normalize-PathEntry -CommandType Function -ErrorAction SilentlyContinue)) {
+    function Normalize-PathEntry {
+        param([string]$PathEntry)
+
+        if ([string]::IsNullOrWhiteSpace($PathEntry)) {
+            return ''
+        }
+
+        $trimmedPath = $PathEntry.Trim()
+        if ($trimmedPath.Length -ge 2 -and $trimmedPath.StartsWith('"') -and $trimmedPath.EndsWith('"')) {
+            $trimmedPath = $trimmedPath.Substring(1, $trimmedPath.Length - 2)
+        }
+
+        $expandedPath = [Environment]::ExpandEnvironmentVariables($trimmedPath)
+
+        try {
+            $normalizedPath = [System.IO.Path]::GetFullPath($expandedPath)
+        }
+        catch {
+            $normalizedPath = $expandedPath
+        }
+
+        $pathRoot = [System.IO.Path]::GetPathRoot($normalizedPath)
+        if ($pathRoot -and -not $normalizedPath.Equals($pathRoot, [System.StringComparison]::Ordinal)) {
+            $normalizedPath = $normalizedPath.TrimEnd('\', '/')
+        }
+
+        return $normalizedPath
+    }
+}
 
 function Write-Info {
     param([string]$Message)
@@ -72,7 +108,10 @@ function Add-ToUserPath {
         $entries = $currentUserPath.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
     }
 
-    if ($entries -contains $PathEntry) {
+    $normalizedPathEntry = Normalize-PathEntry -PathEntry $PathEntry
+    $normalizedEntries = @($entries | ForEach-Object { Normalize-PathEntry -PathEntry $_ })
+
+    if ($normalizedEntries -contains $normalizedPathEntry) {
         return
     }
 

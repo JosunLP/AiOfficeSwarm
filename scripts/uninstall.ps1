@@ -5,6 +5,42 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $binaryPath = Join-Path $InstallDir 'swarm.exe'
+$pathUtilsPath = Join-Path $PSScriptRoot 'path-utils.ps1'
+if (Test-Path $pathUtilsPath) {
+    . $pathUtilsPath
+}
+
+# Keep this fallback in sync with scripts/path-utils.ps1 for one-file downloads.
+if (-not (Get-Command Normalize-PathEntry -CommandType Function -ErrorAction SilentlyContinue)) {
+    function Normalize-PathEntry {
+        param([string]$PathEntry)
+
+        if ([string]::IsNullOrWhiteSpace($PathEntry)) {
+            return ''
+        }
+
+        $trimmedPath = $PathEntry.Trim()
+        if ($trimmedPath.Length -ge 2 -and $trimmedPath.StartsWith('"') -and $trimmedPath.EndsWith('"')) {
+            $trimmedPath = $trimmedPath.Substring(1, $trimmedPath.Length - 2)
+        }
+
+        $expandedPath = [Environment]::ExpandEnvironmentVariables($trimmedPath)
+
+        try {
+            $normalizedPath = [System.IO.Path]::GetFullPath($expandedPath)
+        }
+        catch {
+            $normalizedPath = $expandedPath
+        }
+
+        $pathRoot = [System.IO.Path]::GetPathRoot($normalizedPath)
+        if ($pathRoot -and -not $normalizedPath.Equals($pathRoot, [System.StringComparison]::Ordinal)) {
+            $normalizedPath = $normalizedPath.TrimEnd('\', '/')
+        }
+
+        return $normalizedPath
+    }
+}
 
 function Write-Info {
     param([string]$Message)
@@ -19,8 +55,15 @@ function Remove-FromUserPath {
         return
     }
 
-    $entries = $currentUserPath.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries) |
-        Where-Object { $_ -ne $PathEntry }
+    $normalizedPathEntry = Normalize-PathEntry -PathEntry $PathEntry
+    $existingEntries = @($currentUserPath.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries))
+    $entries = @($existingEntries | Where-Object {
+        (Normalize-PathEntry -PathEntry $_) -ne $normalizedPathEntry
+    })
+
+    if ($entries.Count -eq $existingEntries.Count) {
+        return
+    }
 
     [Environment]::SetEnvironmentVariable('Path', ($entries -join ';'), 'User')
     Write-Info "Removed $PathEntry from the user PATH."
