@@ -68,7 +68,7 @@ Use `SWARM_INSTALL_DIR=/my/path` to override the destination directory.
 **Install a specific version**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.sh -o install-swarm.sh
+curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/v0.1.0/scripts/install.sh -o install-swarm.sh
 sh install-swarm.sh v0.1.0
 rm install-swarm.sh
 ```
@@ -90,7 +90,7 @@ Installs `swarm.exe` to `%LOCALAPPDATA%\AiOfficeSwarm\bin` by default.
 **Install a specific version**
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.ps1 -OutFile install-swarm.ps1
+Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/v0.1.0/scripts/install.ps1 -OutFile install-swarm.ps1
 .\install-swarm.ps1 -Version v0.1.0
 Remove-Item .\install-swarm.ps1
 ```

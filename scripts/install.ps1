@@ -37,6 +37,32 @@ function Get-DownloadUrl {
     return "https://github.com/JosunLP/AiOfficeSwarm/releases/download/$RequestedVersion/$AssetName"
 }
 
+function Get-ExpectedChecksum {
+    param(
+        [string]$ChecksumFile,
+        [string]$AssetName
+    )
+
+    foreach ($line in Get-Content -Path $ChecksumFile) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('#')) {
+            continue
+        }
+
+        $parts = $trimmed -split '\s+', 3
+        if ($parts.Count -lt 2) {
+            continue
+        }
+
+        $name = $parts[1].TrimStart('*')
+        if ($name -eq $AssetName) {
+            return $parts[0].ToLowerInvariant()
+        }
+    }
+
+    throw "Checksum for $AssetName not found in $ChecksumFile"
+}
+
 function Add-ToUserPath {
     param([string]$PathEntry)
 
@@ -63,9 +89,12 @@ function Add-ToUserPath {
 
 $target = Get-TargetTriple
 $assetName = "swarm-$target.zip"
+$checksumsName = 'SHA256SUMS'
 $downloadUrl = Get-DownloadUrl -AssetName $assetName -RequestedVersion $Version
+$checksumsUrl = Get-DownloadUrl -AssetName $checksumsName -RequestedVersion $Version
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
 $archivePath = Join-Path $tempRoot $assetName
+$checksumsPath = Join-Path $tempRoot $checksumsName
 $extractDir = Join-Path $tempRoot 'extract'
 $binaryPath = Join-Path $InstallDir 'swarm.exe'
 
@@ -76,6 +105,14 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 try {
     Write-Info "Downloading $assetName ..."
     Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+    Invoke-WebRequest -Uri $checksumsUrl -OutFile $checksumsPath
+
+    Write-Info 'Verifying checksum ...'
+    $expectedChecksum = Get-ExpectedChecksum -ChecksumFile $checksumsPath -AssetName $assetName
+    $actualChecksum = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualChecksum -ne $expectedChecksum) {
+        throw "Checksum verification failed for $assetName"
+    }
 
     Write-Info "Installing to $InstallDir ..."
     Expand-Archive -LiteralPath $archivePath -DestinationPath $extractDir -Force

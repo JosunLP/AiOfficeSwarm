@@ -4,14 +4,16 @@ use std::{
     cmp::Ordering,
     env::consts::{ARCH, OS},
     fs::{self, File},
-    io,
+    io::{self, Read},
     path::{Component, Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context};
 use clap::Args;
 use semver::Version;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use swarm_config::SwarmConfig;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
@@ -19,6 +21,10 @@ use walkdir::WalkDir;
 const REPO_OWNER: &str = "JosunLP";
 const REPO_NAME: &str = "AiOfficeSwarm";
 const BIN_NAME: &str = "swarm";
+const CHECKSUMS_ASSET_NAME: &str = "SHA256SUMS";
+const GITHUB_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const GITHUB_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const GITHUB_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Update the installed `swarm` binary from GitHub releases.
 #[derive(Args)]
@@ -46,7 +52,8 @@ struct GitHubAsset {
 }
 
 pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> {
-    let release = fetch_release(args.version.as_deref()).await?;
+    let client = github_client()?;
+    let release = fetch_release(&client, args.version.as_deref()).await?;
     let current_version = env!("CARGO_PKG_VERSION");
     let release_version = normalize_version(&release.tag_name);
     let version_comparison = compare_versions(&release.tag_name, current_version);
@@ -97,10 +104,17 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
 
     println!("Downloading {} for {}...", release.tag_name, target);
 
-    let client = github_client()?;
     let temp_dir = tempfile::tempdir().context("Failed to create temporary directory")?;
     let archive_path = temp_dir.path().join(&asset.name);
     download_asset(&client, &asset.browser_download_url, &archive_path).await?;
+    verify_asset_checksum(
+        &client,
+        &release,
+        &asset.name,
+        &archive_path,
+        temp_dir.path(),
+    )
+    .await?;
     let binary_path = extract_binary(&archive_path, temp_dir.path())?;
 
     self_replace::self_replace(&binary_path)
@@ -118,22 +132,19 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
 fn github_client() -> anyhow::Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(format!("{BIN_NAME}/{}", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(GITHUB_CONNECT_TIMEOUT)
+        .read_timeout(GITHUB_READ_TIMEOUT)
+        .timeout(GITHUB_REQUEST_TIMEOUT)
         .build()
         .context("Failed to create GitHub HTTP client")
 }
 
-async fn fetch_release(version: Option<&str>) -> anyhow::Result<GitHubRelease> {
-    let client = github_client()?;
-    let url = match version {
-        Some(version) => format!(
-            "https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{}",
-            normalize_tag(version)
-        ),
-        None => format!("https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"),
-    };
-
+async fn fetch_release(
+    client: &reqwest::Client,
+    version: Option<&str>,
+) -> anyhow::Result<GitHubRelease> {
     client
-        .get(url)
+        .get(release_api_url(version)?)
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .send()
         .await
@@ -143,6 +154,26 @@ async fn fetch_release(version: Option<&str>) -> anyhow::Result<GitHubRelease> {
         .json::<GitHubRelease>()
         .await
         .context("Failed to parse GitHub release response")
+}
+
+fn release_api_url(version: Option<&str>) -> anyhow::Result<reqwest::Url> {
+    let mut url = reqwest::Url::parse(&format!(
+        "https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases"
+    ))
+    .context("Failed to construct GitHub releases API URL")?;
+    let mut segments = url
+        .path_segments_mut()
+        .map_err(|_| anyhow!("Failed to construct GitHub releases API path"))?;
+
+    if let Some(version) = version {
+        segments.push("tags");
+        segments.push(&normalize_tag(version));
+    } else {
+        segments.push("latest");
+    }
+
+    drop(segments);
+    Ok(url)
 }
 
 async fn download_asset(
@@ -176,6 +207,101 @@ async fn download_asset(
     file.flush()
         .await
         .with_context(|| format!("Failed to flush archive '{}'", destination.display()))
+}
+
+async fn verify_asset_checksum(
+    client: &reqwest::Client,
+    release: &GitHubRelease,
+    asset_name: &str,
+    archive_path: &Path,
+    temp_root: &Path,
+) -> anyhow::Result<()> {
+    let checksum_asset = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == CHECKSUMS_ASSET_NAME)
+        .with_context(|| {
+            format!(
+                "No release asset '{}' was found for checksum verification.",
+                CHECKSUMS_ASSET_NAME
+            )
+        })?;
+    let checksums_path = temp_root.join(CHECKSUMS_ASSET_NAME);
+    download_asset(
+        client,
+        &checksum_asset.browser_download_url,
+        &checksums_path,
+    )
+    .await?;
+
+    let checksums = fs::read_to_string(&checksums_path).with_context(|| {
+        format!(
+            "Failed to read checksum file '{}'",
+            checksums_path.display()
+        )
+    })?;
+    let expected_checksum = checksum_for_asset(&checksums, asset_name).with_context(|| {
+        format!(
+            "Failed to find a checksum entry for '{}' in '{}'",
+            asset_name,
+            checksums_path.display()
+        )
+    })?;
+    let actual_checksum = sha256_digest(archive_path)?;
+
+    if actual_checksum != expected_checksum {
+        bail!(
+            "Checksum verification failed for '{}': expected {}, got {}",
+            asset_name,
+            expected_checksum,
+            actual_checksum
+        );
+    }
+
+    Ok(())
+}
+
+fn checksum_for_asset<'a>(checksums: &'a str, asset_name: &str) -> anyhow::Result<&'a str> {
+    checksums
+        .lines()
+        .filter_map(parse_checksum_line)
+        .find_map(|(checksum, name)| (name == asset_name).then_some(checksum))
+        .ok_or_else(|| anyhow!("checksum entry not found"))
+}
+
+fn parse_checksum_line(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    let checksum = parts.next()?;
+    let asset_name = parts.next()?.trim_start_matches('*');
+    if checksum.len() != 64 || !checksum.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    Some((checksum, asset_name))
+}
+
+fn sha256_digest(path: &Path) -> anyhow::Result<String> {
+    let mut file =
+        File::open(path).with_context(|| format!("Failed to open '{}'", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 8 * 1024];
+
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("Failed to read '{}'", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn extract_binary(archive_path: &Path, temp_root: &Path) -> anyhow::Result<PathBuf> {
@@ -461,9 +587,9 @@ fn format_check_report(
 #[cfg(test)]
 mod tests {
     use super::{
-        asset_name_for_target, compare_versions, format_check_report, normalize_tag,
-        normalize_version, supported_target_triple, validate_relative_archive_path,
-        validate_tar_entry_type,
+        asset_name_for_target, checksum_for_asset, compare_versions, format_check_report,
+        normalize_tag, normalize_version, parse_checksum_line, release_api_url,
+        supported_target_triple, validate_relative_archive_path, validate_tar_entry_type,
     };
     use std::{cmp::Ordering, path::Path};
 
@@ -578,5 +704,56 @@ mod tests {
         assert!(validate_tar_entry_type(tar::EntryType::new(b'2')).is_err());
         // b'1' = hardlink
         assert!(validate_tar_entry_type(tar::EntryType::new(b'1')).is_err());
+    }
+
+    #[test]
+    fn constructs_release_api_urls_with_encoded_tags() {
+        let latest = release_api_url(None).unwrap();
+        assert_eq!(
+            latest.as_str(),
+            "https://api.github.com/repos/JosunLP/AiOfficeSwarm/releases/latest"
+        );
+
+        let tagged = release_api_url(Some("release 2026/03/18")).unwrap();
+        assert_eq!(
+            tagged.as_str(),
+            "https://api.github.com/repos/JosunLP/AiOfficeSwarm/releases/tags/release%202026%2F03%2F18"
+        );
+    }
+
+    #[test]
+    fn parses_checksum_entries() {
+        assert_eq!(
+            parse_checksum_line(
+                "8f434346648f6b96df89dda901c5176b10a6d83961fca1c64c23d8bbf6f39767  swarm-x86_64-unknown-linux-gnu.tar.gz"
+            ),
+            Some((
+                "8f434346648f6b96df89dda901c5176b10a6d83961fca1c64c23d8bbf6f39767",
+                "swarm-x86_64-unknown-linux-gnu.tar.gz"
+            ))
+        );
+        assert_eq!(
+            parse_checksum_line(
+                "8f434346648f6b96df89dda901c5176b10a6d83961fca1c64c23d8bbf6f39767 *swarm-x86_64-pc-windows-msvc.zip"
+            ),
+            Some((
+                "8f434346648f6b96df89dda901c5176b10a6d83961fca1c64c23d8bbf6f39767",
+                "swarm-x86_64-pc-windows-msvc.zip"
+            ))
+        );
+        assert_eq!(parse_checksum_line("invalid"), None);
+    }
+
+    #[test]
+    fn finds_matching_checksum_entry() {
+        let checksums = "\
+8f434346648f6b96df89dda901c5176b10a6d83961fca1c64c23d8bbf6f39767  swarm-x86_64-unknown-linux-gnu.tar.gz\n\
+1e8bfeaa6f86db89ddfce3dc775100e91eb54a4d6ffb8f2a4832460d62d3901f  swarm-x86_64-pc-windows-msvc.zip\n";
+
+        assert_eq!(
+            checksum_for_asset(checksums, "swarm-x86_64-pc-windows-msvc.zip").unwrap(),
+            "1e8bfeaa6f86db89ddfce3dc775100e91eb54a4d6ffb8f2a4832460d62d3901f"
+        );
+        assert!(checksum_for_asset(checksums, "missing.tar.gz").is_err());
     }
 }
