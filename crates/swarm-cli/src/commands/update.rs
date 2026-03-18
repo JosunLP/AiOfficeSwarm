@@ -53,14 +53,15 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
 
     if args.check {
         println!(
-            "Current version: {}\nAvailable version: {}\nRelease: {}",
-            current_version, release_version, release.html_url
+            "{}",
+            format_check_report(
+                current_version,
+                release_version,
+                &release.html_url,
+                &release.tag_name,
+                version_comparison,
+            )?
         );
-        if version_comparison == Some(Ordering::Greater) {
-            println!("An update is available.");
-        } else {
-            println!("No update required.");
-        }
         return Ok(());
     }
 
@@ -426,11 +427,37 @@ fn compare_versions(left: &str, right: &str) -> Option<Ordering> {
     }
 }
 
+fn format_check_report(
+    current_version: &str,
+    release_version: &str,
+    release_url: &str,
+    release_tag: &str,
+    version_comparison: Option<Ordering>,
+) -> anyhow::Result<String> {
+    let status = match version_comparison {
+        Some(Ordering::Greater) => "An update is available.",
+        Some(Ordering::Equal | Ordering::Less) => "No update required.",
+        None => {
+            bail!(
+                "Unable to compare the running version '{}' with release tag '{}'.",
+                current_version,
+                release_tag
+            );
+        }
+    };
+
+    Ok(format!(
+        "Current version: {}\nAvailable version: {}\nRelease: {}\n{}",
+        current_version, release_version, release_url, status
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        asset_name_for_target, compare_versions, normalize_tag, normalize_version,
-        supported_target_triple, validate_relative_archive_path, validate_tar_entry_type,
+        asset_name_for_target, compare_versions, format_check_report, normalize_tag,
+        normalize_version, supported_target_triple, validate_relative_archive_path,
+        validate_tar_entry_type,
     };
     use std::{cmp::Ordering, path::Path};
 
@@ -447,6 +474,55 @@ mod tests {
         assert_eq!(compare_versions("v1.2.0", "1.1.9"), Some(Ordering::Greater));
         assert_eq!(compare_versions("v1.2.0", "1.2.0"), Some(Ordering::Equal));
         assert_eq!(compare_versions("1.1.9", "v1.2.0"), Some(Ordering::Less));
+    }
+
+    #[test]
+    fn formats_check_report_for_all_version_states() {
+        assert_eq!(
+            format_check_report(
+                "1.0.0",
+                "1.2.0",
+                "https://example.invalid/releases/v1.2.0",
+                "v1.2.0",
+                Some(Ordering::Greater)
+            )
+            .unwrap(),
+            "Current version: 1.0.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nAn update is available."
+        );
+        assert_eq!(
+            format_check_report(
+                "1.2.0",
+                "1.2.0",
+                "https://example.invalid/releases/v1.2.0",
+                "v1.2.0",
+                Some(Ordering::Equal)
+            )
+            .unwrap(),
+            "Current version: 1.2.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nNo update required."
+        );
+        assert_eq!(
+            format_check_report(
+                "1.3.0",
+                "1.2.0",
+                "https://example.invalid/releases/v1.2.0",
+                "v1.2.0",
+                Some(Ordering::Less)
+            )
+            .unwrap(),
+            "Current version: 1.3.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nNo update required."
+        );
+        assert_eq!(
+            format_check_report(
+                "1.0.0",
+                "not-a-semver-tag",
+                "https://example.invalid/releases/not-a-semver-tag",
+                "not-a-semver-tag",
+                None
+            )
+            .unwrap_err()
+            .to_string(),
+            "Unable to compare the running version '1.0.0' with release tag 'not-a-semver-tag'."
+        );
     }
 
     #[test]
