@@ -46,7 +46,7 @@ cargo test --workspace
 
 ## Workspace Layout
 
-```
+```bash
 AiOfficeSwarm/
 ├── Cargo.toml                   # Workspace root
 ├── crates/
@@ -75,16 +75,16 @@ See [docs/architecture.md](docs/architecture.md) for a full description.
 
 The framework is layered:
 
-| Layer | Crate | Responsibility |
-|-------|-------|----------------|
-| Core domain | `swarm-core` | Types, traits, error model |
-| Control plane | `swarm-orchestrator` | Registry, scheduling, supervision |
-| Policy | `swarm-policy` | RBAC, admission, policy evaluation |
-| Runtime | `swarm-runtime` | Execution, retry, circuit breaker |
-| Plugin | `swarm-plugin` | Plugin SDK and host |
-| Config | `swarm-config` | Configuration, secrets |
-| Telemetry | `swarm-telemetry` | Tracing, metrics, audit |
-| Interface | `swarm-cli` | CLI management interface |
+| Layer         | Crate                | Responsibility                     |
+| ------------- | -------------------- | ---------------------------------- |
+| Core domain   | `swarm-core`         | Types, traits, error model         |
+| Control plane | `swarm-orchestrator` | Registry, scheduling, supervision  |
+| Policy        | `swarm-policy`       | RBAC, admission, policy evaluation |
+| Runtime       | `swarm-runtime`      | Execution, retry, circuit breaker  |
+| Plugin        | `swarm-plugin`       | Plugin SDK and host                |
+| Config        | `swarm-config`       | Configuration, secrets             |
+| Telemetry     | `swarm-telemetry`    | Tracing, metrics, audit            |
+| Interface     | `swarm-cli`          | CLI management interface           |
 
 ---
 
@@ -240,5 +240,4 @@ See `plugins/example-integration/` for a complete worked example.
 
 ## License
 
-Licensed under either of [Apache License 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT) at your option.
+Licensed under [MIT license](LICENSE-MIT).
