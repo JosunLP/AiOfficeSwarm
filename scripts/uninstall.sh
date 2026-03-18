@@ -16,9 +16,13 @@ else
   say "Nothing to remove at $BINARY_PATH"
 fi
 
-if [ -d "$INSTALL_DIR" ] && [ -z "$(ls -A "$INSTALL_DIR")" ]; then
-  rmdir "$INSTALL_DIR"
-  say "Removed empty directory $INSTALL_DIR"
+if [ -d "$INSTALL_DIR" ]; then
+  if entries="$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)"; then
+    if [ -z "$entries" ]; then
+      rmdir "$INSTALL_DIR"
+      say "Removed empty directory $INSTALL_DIR"
+    fi
+  fi
 fi
 
 say "If '$INSTALL_DIR' is referenced in your PATH manually, you can remove that entry now."

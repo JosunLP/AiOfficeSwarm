@@ -5,7 +5,7 @@ use std::{
     env::consts::{ARCH, OS},
     fs::{self, File},
     io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use anyhow::{anyhow, bail, Context};
@@ -13,6 +13,7 @@ use clap::Args;
 use semver::Version;
 use serde::Deserialize;
 use swarm_config::SwarmConfig;
+use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
 const REPO_OWNER: &str = "JosunLP";
@@ -52,12 +53,12 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
     if args.version.is_none() {
         match compare_versions(&release.tag_name, current_version) {
             Some(Ordering::Equal) => {
-                println!("swarm ist bereits aktuell (Version {}).", current_version);
+                println!("swarm is already up to date (version {}).", current_version);
                 return Ok(());
             }
             Some(Ordering::Less) => {
                 bail!(
-                    "Die neueste veröffentlichte Version ({}) ist älter als die laufende Build-Version ({}).",
+                    "The latest published version ({}) is older than the running build version ({}).",
                     release_version,
                     current_version
                 );
@@ -68,13 +69,13 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
 
     if args.check {
         println!(
-            "Aktuelle Version: {}\nVerfügbare Version: {}\nRelease: {}",
+            "Current version: {}\nAvailable version: {}\nRelease: {}",
             current_version, release_version, release.html_url
         );
         if compare_versions(&release.tag_name, current_version) == Some(Ordering::Greater) {
-            println!("Ein Update ist verfügbar.");
+            println!("An update is available.");
         } else {
-            println!("Kein Update erforderlich.");
+            println!("No update required.");
         }
         return Ok(());
     }
@@ -87,32 +88,27 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
         .find(|asset| asset.name == asset_name)
         .with_context(|| {
             format!(
-                "Kein Release-Asset '{}' für das Ziel '{}' gefunden.",
+                "No release asset '{}' was found for target '{}'.",
                 asset_name, target
             )
         })?;
 
-    println!("Lade {} für {} herunter...", release.tag_name, target);
+    println!("Downloading {} for {}...", release.tag_name, target);
 
     let client = github_client()?;
-    let temp_dir =
-        tempfile::tempdir().context("Temporäres Verzeichnis konnte nicht erstellt werden")?;
+    let temp_dir = tempfile::tempdir().context("Failed to create temporary directory")?;
     let archive_path = temp_dir.path().join(&asset.name);
     download_asset(&client, &asset.browser_download_url, &archive_path).await?;
     let binary_path = extract_binary(&archive_path, temp_dir.path())?;
 
-    self_replace::self_replace(&binary_path).with_context(|| {
-        format!(
-            "Konnte '{}' nicht durch die neue Version ersetzen",
-            BIN_NAME
-        )
-    })?;
+    self_replace::self_replace(&binary_path)
+        .with_context(|| format!("Failed to replace '{}' with the new version", BIN_NAME))?;
 
     println!(
-        "swarm wurde erfolgreich von {} auf {} aktualisiert.",
+        "swarm was successfully updated from {} to {}.",
         current_version, release_version
     );
-    println!("Release-Hinweise: {}", release.html_url);
+    println!("Release notes: {}", release.html_url);
 
     Ok(())
 }
@@ -121,7 +117,7 @@ fn github_client() -> anyhow::Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(format!("{BIN_NAME}/{}", env!("CARGO_PKG_VERSION")))
         .build()
-        .context("GitHub-HTTP-Client konnte nicht erstellt werden")
+        .context("Failed to create GitHub HTTP client")
 }
 
 async fn fetch_release(version: Option<&str>) -> anyhow::Result<GitHubRelease> {
@@ -139,12 +135,12 @@ async fn fetch_release(version: Option<&str>) -> anyhow::Result<GitHubRelease> {
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .send()
         .await
-        .context("GitHub Release-Metadaten konnten nicht geladen werden")?
+        .context("Failed to load GitHub release metadata")?
         .error_for_status()
-        .context("GitHub Release-Metadaten konnten nicht geladen werden")?
+        .context("Failed to load GitHub release metadata")?
         .json::<GitHubRelease>()
         .await
-        .context("GitHub Release-Antwort konnte nicht verarbeitet werden")
+        .context("Failed to parse GitHub release response")
 }
 
 async fn download_asset(
@@ -156,28 +152,35 @@ async fn download_asset(
         .get(url)
         .send()
         .await
-        .with_context(|| format!("Download von '{}' fehlgeschlagen", url))?
+        .with_context(|| format!("Failed to download '{}'", url))?
         .error_for_status()
-        .with_context(|| format!("Download von '{}' fehlgeschlagen", url))?;
+        .with_context(|| format!("Failed to download '{}'", url))?;
 
-    let bytes = response
-        .bytes()
+    let mut file = tokio::fs::File::create(destination)
         .await
-        .with_context(|| format!("Antwort von '{}' konnte nicht gelesen werden", url))?;
+        .with_context(|| format!("Failed to create archive '{}'", destination.display()))?;
 
-    fs::write(destination, &bytes).with_context(|| {
-        format!(
-            "Archiv '{}' konnte nicht gespeichert werden",
-            destination.display()
-        )
-    })
+    let mut response = response;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .with_context(|| format!("Failed to read response body from '{}'", url))?
+    {
+        file.write_all(&chunk)
+            .await
+            .with_context(|| format!("Failed to write archive '{}'", destination.display()))?;
+    }
+
+    file.flush()
+        .await
+        .with_context(|| format!("Failed to flush archive '{}'", destination.display()))
 }
 
 fn extract_binary(archive_path: &Path, temp_root: &Path) -> anyhow::Result<PathBuf> {
     let extract_dir = temp_root.join("extract");
     fs::create_dir_all(&extract_dir).with_context(|| {
         format!(
-            "Extraktionsverzeichnis '{}' konnte nicht erstellt werden",
+            "Failed to create extraction directory '{}'",
             extract_dir.display()
         )
     })?;
@@ -185,14 +188,14 @@ fn extract_binary(archive_path: &Path, temp_root: &Path) -> anyhow::Result<PathB
     let archive_name = archive_path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| anyhow!("Archivname konnte nicht bestimmt werden"))?;
+        .ok_or_else(|| anyhow!("Failed to determine archive name"))?;
 
     if archive_name.ends_with(".zip") {
         extract_zip_archive(archive_path, &extract_dir)?;
     } else if archive_name.ends_with(".tar.gz") {
         extract_tar_gz_archive(archive_path, &extract_dir)?;
     } else {
-        bail!("Nicht unterstütztes Archivformat: {}", archive_name);
+        bail!("Unsupported archive format: {}", archive_name);
     }
 
     let binary_name = executable_name();
@@ -203,44 +206,73 @@ fn extract_binary(archive_path: &Path, temp_root: &Path) -> anyhow::Result<PathB
             entry.file_type().is_file() && entry.file_name().to_string_lossy() == binary_name
         })
         .map(|entry| entry.into_path())
-        .with_context(|| format!("Die Datei '{}' wurde im Archiv nicht gefunden", binary_name))
+        .with_context(|| format!("The file '{}' was not found in the archive", binary_name))
 }
 
 fn extract_tar_gz_archive(archive_path: &Path, extract_dir: &Path) -> anyhow::Result<()> {
-    let file = File::open(archive_path).with_context(|| {
-        format!(
-            "Archiv '{}' konnte nicht geöffnet werden",
-            archive_path.display()
-        )
-    })?;
+    let file = File::open(archive_path)
+        .with_context(|| format!("Failed to open archive '{}'", archive_path.display()))?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
-    archive.unpack(extract_dir).with_context(|| {
-        format!(
-            "Archiv '{}' konnte nicht entpackt werden",
-            archive_path.display()
-        )
-    })
+    for (index, entry) in archive
+        .entries()
+        .with_context(|| format!("Failed to read archive '{}'", archive_path.display()))?
+        .enumerate()
+    {
+        let mut entry = entry.with_context(|| {
+            format!(
+                "Failed to read tar entry #{} from '{}'",
+                index,
+                archive_path.display()
+            )
+        })?;
+        let entry_path = entry
+            .path()
+            .with_context(|| {
+                format!(
+                    "Failed to read tar entry path #{} from '{}'",
+                    index,
+                    archive_path.display()
+                )
+            })?
+            .into_owned();
+        validate_relative_archive_path(&entry_path).with_context(|| {
+            format!(
+                "Archive '{}' contains an unsafe path '{}'",
+                archive_path.display(),
+                entry_path.display()
+            )
+        })?;
+
+        let unpacked = entry.unpack_in(extract_dir).with_context(|| {
+            format!(
+                "Failed to extract '{}' from archive '{}'",
+                entry_path.display(),
+                archive_path.display()
+            )
+        })?;
+        if !unpacked {
+            bail!(
+                "Archive '{}' contains an entry outside the extraction directory: '{}'",
+                archive_path.display(),
+                entry_path.display()
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn extract_zip_archive(archive_path: &Path, extract_dir: &Path) -> anyhow::Result<()> {
-    let file = File::open(archive_path).with_context(|| {
-        format!(
-            "Archiv '{}' konnte nicht geöffnet werden",
-            archive_path.display()
-        )
-    })?;
-    let mut archive = zip::ZipArchive::new(file).with_context(|| {
-        format!(
-            "ZIP-Archiv '{}' konnte nicht gelesen werden",
-            archive_path.display()
-        )
-    })?;
+    let file = File::open(archive_path)
+        .with_context(|| format!("Failed to open archive '{}'", archive_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .with_context(|| format!("Failed to read ZIP archive '{}'", archive_path.display()))?;
 
     for index in 0..archive.len() {
         let mut entry = archive
             .by_index(index)
-            .with_context(|| format!("ZIP-Eintrag #{} konnte nicht gelesen werden", index))?;
+            .with_context(|| format!("Failed to read ZIP entry #{}", index))?;
         let Some(relative_path) = entry.enclosed_name().map(|path| path.to_owned()) else {
             continue;
         };
@@ -248,35 +280,20 @@ fn extract_zip_archive(archive_path: &Path, extract_dir: &Path) -> anyhow::Resul
         let output_path = extract_dir.join(relative_path);
         if entry.name().ends_with('/') {
             fs::create_dir_all(&output_path).with_context(|| {
-                format!(
-                    "Verzeichnis '{}' konnte nicht erstellt werden",
-                    output_path.display()
-                )
+                format!("Failed to create directory '{}'", output_path.display())
             })?;
             continue;
         }
 
         if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "Verzeichnis '{}' konnte nicht erstellt werden",
-                    parent.display()
-                )
-            })?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory '{}'", parent.display()))?;
         }
 
-        let mut output_file = File::create(&output_path).with_context(|| {
-            format!(
-                "Datei '{}' konnte nicht erstellt werden",
-                output_path.display()
-            )
-        })?;
-        io::copy(&mut entry, &mut output_file).with_context(|| {
-            format!(
-                "Datei '{}' konnte nicht geschrieben werden",
-                output_path.display()
-            )
-        })?;
+        let mut output_file = File::create(&output_path)
+            .with_context(|| format!("Failed to create file '{}'", output_path.display()))?;
+        io::copy(&mut entry, &mut output_file)
+            .with_context(|| format!("Failed to write file '{}'", output_path.display()))?;
 
         #[cfg(unix)]
         {
@@ -284,12 +301,7 @@ fn extract_zip_archive(archive_path: &Path, extract_dir: &Path) -> anyhow::Resul
 
             if let Some(mode) = entry.unix_mode() {
                 fs::set_permissions(&output_path, fs::Permissions::from_mode(mode)).with_context(
-                    || {
-                        format!(
-                            "Berechtigungen für '{}' konnten nicht gesetzt werden",
-                            output_path.display()
-                        )
-                    },
+                    || format!("Failed to set permissions for '{}'", output_path.display()),
                 )?;
             }
         }
@@ -298,16 +310,37 @@ fn extract_zip_archive(archive_path: &Path, extract_dir: &Path) -> anyhow::Resul
     Ok(())
 }
 
+fn validate_relative_archive_path(path: &Path) -> anyhow::Result<()> {
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        bail!("archive entry escapes the extraction directory");
+    }
+
+    Ok(())
+}
+
 fn current_target_triple() -> anyhow::Result<&'static str> {
-    match (OS, ARCH) {
+    supported_target_triple(OS, ARCH)
+}
+
+fn supported_target_triple(os: &str, arch: &str) -> anyhow::Result<&'static str> {
+    match (os, arch) {
         ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu"),
-        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu"),
+        ("linux", "aarch64") => {
+            bail!("Self-updates are not published for Linux ARM64 yet")
+        }
         ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
         ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
         ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc"),
-        ("windows", "aarch64") => Ok("aarch64-pc-windows-msvc"),
+        ("windows", "aarch64") => {
+            bail!("Self-updates are not published for Windows ARM64 yet")
+        }
         (os, arch) => bail!(
-            "Die Plattform '{}' mit Architektur '{}' wird für Self-Updates nicht unterstützt",
+            "Self-updates are not supported on platform '{}' with architecture '{}'",
             os,
             arch
         ),
@@ -355,8 +388,11 @@ fn compare_versions(left: &str, right: &str) -> Option<Ordering> {
 
 #[cfg(test)]
 mod tests {
-    use super::{asset_name_for_target, compare_versions, normalize_tag, normalize_version};
-    use std::cmp::Ordering;
+    use super::{
+        asset_name_for_target, compare_versions, normalize_tag, normalize_version,
+        supported_target_triple, validate_relative_archive_path,
+    };
+    use std::{cmp::Ordering, path::Path};
 
     #[test]
     fn normalizes_versions_and_tags() {
@@ -383,5 +419,23 @@ mod tests {
             asset_name_for_target("x86_64-pc-windows-msvc"),
             "swarm-x86_64-pc-windows-msvc.zip"
         );
+    }
+
+    #[test]
+    fn rejects_unsupported_release_targets() {
+        assert_eq!(
+            supported_target_triple("macos", "aarch64").unwrap(),
+            "aarch64-apple-darwin"
+        );
+        assert!(supported_target_triple("linux", "aarch64").is_err());
+        assert!(supported_target_triple("windows", "aarch64").is_err());
+    }
+
+    #[test]
+    fn rejects_archive_paths_that_escape_extract_dir() {
+        assert!(validate_relative_archive_path(Path::new("swarm")).is_ok());
+        assert!(validate_relative_archive_path(Path::new("nested/swarm")).is_ok());
+        assert!(validate_relative_archive_path(Path::new("../swarm")).is_err());
+        assert!(validate_relative_archive_path(Path::new("/tmp/swarm")).is_err());
     }
 }

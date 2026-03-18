@@ -16,7 +16,7 @@ First public release of `AiOfficeSwarm`.
   and CLI usage.
 - Hierarchical agent supervision, capability-aware task scheduling and a deny-
   by-default policy model.
-- Native plugin SDK plus WASM plugin loading with manifest-driven permissions.
+- Native plugin SDK plus WASM plugin loading with manifest-declared permission metadata.
 - `swarm` CLI with demo, config, task, plugin, metrics and self-update commands.
 - Cross-platform install and uninstall scripts for Linux, macOS and Windows.
 - GitHub Actions workflows for CI and release packaging across major platforms.
