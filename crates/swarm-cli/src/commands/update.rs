@@ -49,9 +49,23 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
     let release = fetch_release(args.version.as_deref()).await?;
     let current_version = env!("CARGO_PKG_VERSION");
     let release_version = normalize_version(&release.tag_name);
+    let version_comparison = compare_versions(&release.tag_name, current_version);
+
+    if args.check {
+        println!(
+            "Current version: {}\nAvailable version: {}\nRelease: {}",
+            current_version, release_version, release.html_url
+        );
+        if version_comparison == Some(Ordering::Greater) {
+            println!("An update is available.");
+        } else {
+            println!("No update required.");
+        }
+        return Ok(());
+    }
 
     if args.version.is_none() {
-        match compare_versions(&release.tag_name, current_version) {
+        match version_comparison {
             Some(Ordering::Equal) => {
                 println!("swarm is already up to date (version {}).", current_version);
                 return Ok(());
@@ -65,19 +79,6 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
             }
             _ => {}
         }
-    }
-
-    if args.check {
-        println!(
-            "Current version: {}\nAvailable version: {}\nRelease: {}",
-            current_version, release_version, release.html_url
-        );
-        if compare_versions(&release.tag_name, current_version) == Some(Ordering::Greater) {
-            println!("An update is available.");
-        } else {
-            println!("No update required.");
-        }
-        return Ok(());
     }
 
     let target = current_target_triple()?;

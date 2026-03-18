@@ -63,9 +63,9 @@ need_cmd tar
 need_cmd install
 
 if command -v curl >/dev/null 2>&1; then
-  DOWNLOAD_CMD='curl -fsSL'
+  DOWNLOAD_TOOL='curl'
 elif command -v wget >/dev/null 2>&1; then
-  DOWNLOAD_CMD='wget -qO-'
+  DOWNLOAD_TOOL='wget'
 else
   fail 'curl or wget is required'
 fi
@@ -88,11 +88,11 @@ trap cleanup EXIT INT TERM
 mkdir -p "$INSTALL_DIR"
 
 say "Downloading $ASSET_NAME ..."
-case "$DOWNLOAD_CMD" in
-  'curl -fsSL')
+case "$DOWNLOAD_TOOL" in
+  curl)
     curl -fsSL "$DOWNLOAD_URL" -o "$ARCHIVE_PATH"
     ;;
-  'wget -qO-')
+  wget)
     wget -qO "$ARCHIVE_PATH" "$DOWNLOAD_URL"
     ;;
   *)

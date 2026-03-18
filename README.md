@@ -46,15 +46,15 @@ cargo test --workspace
 
 ## Installation
 
-Für die erste veröffentlichte Version ist `v0.1.0` vorgesehen.
-Die Beispiele unten zeigen sowohl **latest** als auch eine **fest gepinnte Version**.
+The first planned public release is `v0.1.0`.
+The examples below show both **latest** and a **pinned version**.
 
 ### Linux / macOS
 
-Derzeit veröffentlichte Installations-Binaries decken Linux x86_64 sowie
-macOS auf Intel- und Apple-Silicon-Systemen ab.
+Published installer binaries currently cover Linux x86_64 as well as macOS on
+Intel and Apple Silicon systems.
 
-**Schnellstart (neueste Version)**
+**Quick start (latest version)**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.sh -o install-swarm.sh
@@ -62,10 +62,10 @@ sh install-swarm.sh
 rm install-swarm.sh
 ```
 
-Installiert `swarm` standardmäßig nach `~/.local/bin`.
-Mit `SWARM_INSTALL_DIR=/mein/pfad` kann das Zielverzeichnis überschrieben werden.
+Installs `swarm` to `~/.local/bin` by default.
+Use `SWARM_INSTALL_DIR=/my/path` to override the destination directory.
 
-**Bestimmte Version installieren**
+**Install a specific version**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.sh -o install-swarm.sh
@@ -75,9 +75,9 @@ rm install-swarm.sh
 
 ### Windows (PowerShell)
 
-Derzeit veröffentlichte Installations-Binaries decken Windows x86_64 ab.
+Published installer binaries currently cover Windows x86_64.
 
-**Schnellstart (neueste Version)**
+**Quick start (latest version)**
 
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.ps1 -OutFile install-swarm.ps1
@@ -85,9 +85,9 @@ Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/s
 Remove-Item .\install-swarm.ps1
 ```
 
-Installiert `swarm.exe` standardmäßig nach `%LOCALAPPDATA%\AiOfficeSwarm\bin`.
+Installs `swarm.exe` to `%LOCALAPPDATA%\AiOfficeSwarm\bin` by default.
 
-**Bestimmte Version installieren**
+**Install a specific version**
 
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.ps1 -OutFile install-swarm.ps1
@@ -95,16 +95,16 @@ Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/s
 Remove-Item .\install-swarm.ps1
 ```
 
-### Installation prüfen
+### Verify the installation
 
 ```bash
 swarm --version
 swarm demo
 ```
 
-### Aktualisieren
+### Update
 
-Nach der Installation kann sich die CLI selbst aktualisieren:
+After installation, the CLI can update itself:
 
 ```bash
 swarm update
@@ -112,7 +112,7 @@ swarm update --check
 swarm update --version v0.1.0
 ```
 
-### Deinstallation
+### Uninstall
 
 - Linux / macOS:
 
@@ -130,10 +130,10 @@ swarm update --version v0.1.0
     Remove-Item .\uninstall-swarm.ps1
     ```
 
-### Release-Hinweise
+### Release notes
 
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
-- Geplanter erster Release-Tag: `v0.1.0`
+- Planned first release tag: `v0.1.0`
 
 ---
 
