@@ -2,12 +2,21 @@
 set -eu
 
 BINARY_NAME="swarm"
-INSTALL_DIR="${SWARM_INSTALL_DIR:-${HOME}/.local/bin}"
-BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
 
 say() {
   printf '%s\n' "$*"
 }
+
+if [ -n "${SWARM_INSTALL_DIR:-}" ]; then
+  INSTALL_DIR="$SWARM_INSTALL_DIR"
+elif [ -n "${HOME:-}" ]; then
+  INSTALL_DIR="${HOME}/.local/bin"
+else
+  say 'Error: HOME is not set; set SWARM_INSTALL_DIR to choose an install directory' >&2
+  exit 1
+fi
+
+BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
 
 if [ -f "$BINARY_PATH" ]; then
   rm -f "$BINARY_PATH"

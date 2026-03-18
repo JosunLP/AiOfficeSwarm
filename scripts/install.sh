@@ -5,7 +5,6 @@ REPO_OWNER="JosunLP"
 REPO_NAME="AiOfficeSwarm"
 BINARY_NAME="swarm"
 CHECKSUMS_NAME="SHA256SUMS"
-INSTALL_DIR="${SWARM_INSTALL_DIR:-${HOME}/.local/bin}"
 REQUESTED_VERSION="${1:-latest}"
 
 say() {
@@ -16,6 +15,14 @@ fail() {
   say "Error: $*" >&2
   exit 1
 }
+
+if [ -n "${SWARM_INSTALL_DIR:-}" ]; then
+  INSTALL_DIR="$SWARM_INSTALL_DIR"
+elif [ -n "${HOME:-}" ]; then
+  INSTALL_DIR="${HOME}/.local/bin"
+else
+  fail 'HOME is not set; set SWARM_INSTALL_DIR to choose an install directory'
+fi
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
