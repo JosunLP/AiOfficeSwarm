@@ -411,7 +411,9 @@ fn extract_zip_archive(archive_path: &Path, extract_dir: &Path) -> anyhow::Resul
             .with_context(|| format!("Failed to read ZIP entry #{}", index))?;
         let Some(relative_path) = entry.enclosed_name().map(|path| path.to_owned()) else {
             anyhow::bail!(
-                "ZIP archive contains an unsafe path '{}'; aborting update",
+                "ZIP archive '{}' contains unsafe entry #{} path '{}'; aborting update",
+                archive_path.display(),
+                index,
                 entry.name()
             );
         };
@@ -591,11 +593,12 @@ fn format_check_report(
 #[cfg(test)]
 mod tests {
     use super::{
-        asset_name_for_target, checksum_for_asset, compare_versions, format_check_report,
-        normalize_tag, normalize_version, parse_checksum_line, release_api_url,
-        supported_target_triple, validate_relative_archive_path, validate_tar_entry_type,
+        asset_name_for_target, checksum_for_asset, compare_versions, extract_zip_archive,
+        format_check_report, normalize_tag, normalize_version, parse_checksum_line,
+        release_api_url, supported_target_triple, validate_relative_archive_path,
+        validate_tar_entry_type,
     };
-    use std::{cmp::Ordering, path::Path};
+    use std::{cmp::Ordering, fs::File, io::Write, path::Path};
 
     #[test]
     fn normalizes_versions_and_tags() {
@@ -759,5 +762,26 @@ mod tests {
             "1e8bfeaa6f86db89ddfce3dc775100e91eb54a4d6ffb8f2a4832460d62d3901f"
         );
         assert!(checksum_for_asset(checksums, "missing.tar.gz").is_err());
+    }
+
+    #[test]
+    fn rejects_zip_entries_with_unsafe_paths() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let archive_path = temp_dir.path().join("unsafe.zip");
+        let extract_dir = temp_dir.path().join("extract");
+
+        let file = File::create(&archive_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("../swarm", zip::write::FileOptions::default())
+            .unwrap();
+        zip.write_all(b"unsafe").unwrap();
+        zip.finish().unwrap();
+
+        let error = extract_zip_archive(&archive_path, &extract_dir).unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains("unsafe.zip"));
+        assert!(message.contains("entry #0"));
+        assert!(message.contains("../swarm"));
     }
 }
