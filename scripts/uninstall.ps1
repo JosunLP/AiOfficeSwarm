@@ -11,6 +11,29 @@ function Write-Info {
     Write-Host $Message -ForegroundColor Cyan
 }
 
+function Normalize-PathEntry {
+    param([string]$PathEntry)
+
+    if ([string]::IsNullOrWhiteSpace($PathEntry)) {
+        return ''
+    }
+
+    $expandedPath = [Environment]::ExpandEnvironmentVariables($PathEntry.Trim().Trim('"'))
+
+    try {
+        $normalizedPath = [System.IO.Path]::GetFullPath($expandedPath)
+    }
+    catch {
+        $normalizedPath = $expandedPath
+    }
+
+    if ($normalizedPath.Length -gt 3) {
+        $normalizedPath = $normalizedPath.TrimEnd('\', '/')
+    }
+
+    return $normalizedPath
+}
+
 function Remove-FromUserPath {
     param([string]$PathEntry)
 
@@ -19,8 +42,15 @@ function Remove-FromUserPath {
         return
     }
 
-    $entries = $currentUserPath.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries) |
-        Where-Object { $_ -ne $PathEntry }
+    $normalizedPathEntry = Normalize-PathEntry -PathEntry $PathEntry
+    $existingEntries = @($currentUserPath.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries))
+    $entries = @($existingEntries | Where-Object {
+        (Normalize-PathEntry -PathEntry $_) -ne $normalizedPathEntry
+    })
+
+    if ($entries.Count -eq $existingEntries.Count) {
+        return
+    }
 
     [Environment]::SetEnvironmentVariable('Path', ($entries -join ';'), 'User')
     Write-Info "Removed $PathEntry from the user PATH."

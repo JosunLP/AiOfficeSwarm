@@ -81,7 +81,7 @@ Published installer binaries currently cover Windows x86_64.
 
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.ps1 -OutFile install-swarm.ps1
-.\install-swarm.ps1
+powershell -ExecutionPolicy Bypass -File .\install-swarm.ps1
 Remove-Item .\install-swarm.ps1
 ```
 
@@ -91,7 +91,7 @@ Installs `swarm.exe` to `%LOCALAPPDATA%\AiOfficeSwarm\bin` by default.
 
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/v0.1.0/scripts/install.ps1 -OutFile install-swarm.ps1
-.\install-swarm.ps1 -Version v0.1.0
+powershell -ExecutionPolicy Bypass -File .\install-swarm.ps1 -Version v0.1.0
 Remove-Item .\install-swarm.ps1
 ```
 
@@ -133,7 +133,7 @@ swarm update --version v0.1.0
 ### Release notes
 
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
-- Planned first release tag: `v0.1.0`
+- First release tag: `v0.1.0`
 
 ---
 

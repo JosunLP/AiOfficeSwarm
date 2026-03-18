@@ -63,6 +63,29 @@ function Get-ExpectedChecksum {
     throw "Checksum for $AssetName not found in $ChecksumFile"
 }
 
+function Normalize-PathEntry {
+    param([string]$PathEntry)
+
+    if ([string]::IsNullOrWhiteSpace($PathEntry)) {
+        return ''
+    }
+
+    $expandedPath = [Environment]::ExpandEnvironmentVariables($PathEntry.Trim().Trim('"'))
+
+    try {
+        $normalizedPath = [System.IO.Path]::GetFullPath($expandedPath)
+    }
+    catch {
+        $normalizedPath = $expandedPath
+    }
+
+    if ($normalizedPath.Length -gt 3) {
+        $normalizedPath = $normalizedPath.TrimEnd('\', '/')
+    }
+
+    return $normalizedPath
+}
+
 function Add-ToUserPath {
     param([string]$PathEntry)
 
@@ -72,7 +95,10 @@ function Add-ToUserPath {
         $entries = $currentUserPath.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
     }
 
-    if ($entries -contains $PathEntry) {
+    $normalizedPathEntry = Normalize-PathEntry -PathEntry $PathEntry
+    $normalizedEntries = @($entries | ForEach-Object { Normalize-PathEntry -PathEntry $_ })
+
+    if ($normalizedEntries -contains $normalizedPathEntry) {
         return
     }
 
