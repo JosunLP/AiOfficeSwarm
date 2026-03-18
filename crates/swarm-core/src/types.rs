@@ -132,8 +132,23 @@ impl RetryPolicy {
         let base = match self.strategy {
             RetryStrategy::Fixed => self.initial_delay,
             RetryStrategy::ExponentialBackoff { multiplier } => {
+                if !multiplier.is_finite() || multiplier <= 0.0 {
+                    return self.max_delay;
+                }
+
                 let factor = multiplier.powi((attempt - 1) as i32);
-                Duration::from_secs_f64(self.initial_delay.as_secs_f64() * factor)
+                if !factor.is_finite() || factor <= 0.0 {
+                    return self.max_delay;
+                }
+
+                let capped_secs = (self.initial_delay.as_secs_f64() * factor)
+                    .min(self.max_delay.as_secs_f64());
+
+                if !capped_secs.is_finite() {
+                    return self.max_delay;
+                }
+
+                Duration::from_secs_f64(capped_secs)
             }
         };
         base.min(self.max_delay)
@@ -187,6 +202,34 @@ mod tests {
         };
         // After a few attempts the delay should be capped at max_delay.
         assert!(policy.delay_for_attempt(3) <= Duration::from_secs(3));
+    }
+
+    #[test]
+    fn retry_policy_invalid_multiplier_falls_back_to_max_delay() {
+        for multiplier in [f64::NAN, f64::INFINITY, 0.0, -2.0] {
+            let policy = RetryPolicy {
+                max_attempts: 5,
+                initial_delay: Duration::from_millis(100),
+                max_delay: Duration::from_secs(3),
+                strategy: RetryStrategy::ExponentialBackoff { multiplier },
+            };
+
+            assert_eq!(policy.delay_for_attempt(2), Duration::from_secs(3));
+        }
+    }
+
+    #[test]
+    fn retry_policy_overflowing_backoff_is_capped_without_panicking() {
+        let policy = RetryPolicy {
+            max_attempts: 5,
+            initial_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(3),
+            strategy: RetryStrategy::ExponentialBackoff {
+                multiplier: f64::MAX,
+            },
+        };
+
+        assert_eq!(policy.delay_for_attempt(3), Duration::from_secs(3));
     }
 
     #[test]

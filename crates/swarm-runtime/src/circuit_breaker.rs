@@ -185,9 +185,11 @@ impl CircuitBreaker {
         };
         if should_open {
             let opened_at = Utc::now();
-            let retry_after = opened_at
-                + chrono::Duration::seconds(inner.config.open_duration_secs as i64);
-            let retry_deadline = Instant::now() + Duration::from_secs(inner.config.open_duration_secs);
+            let std_duration = Duration::from_secs(inner.config.open_duration_secs);
+            let chrono_duration = chrono::Duration::from_std(std_duration)
+                .unwrap_or(chrono::Duration::MAX);
+            let retry_after = opened_at + chrono_duration;
+            let retry_deadline = Instant::now() + std_duration;
             tracing::warn!(
                 circuit = %self.name,
                 failures = inner.consecutive_failures,
