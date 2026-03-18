@@ -36,6 +36,14 @@ normalize_os() {
   esac
 }
 
+validate_target() {
+  case "$1" in
+    x86_64-unknown-linux-gnu|x86_64-apple-darwin|aarch64-apple-darwin) ;;
+    aarch64-unknown-linux-gnu) fail 'Linux ARM64 binaries are not published yet' ;;
+    *) fail "Unsupported release target: $1" ;;
+  esac
+}
+
 build_download_url() {
   asset_name="$1"
   if [ "$REQUESTED_VERSION" = "latest" ]; then
@@ -65,6 +73,7 @@ fi
 ARCH="$(normalize_arch "$(uname -m)")"
 PLATFORM="$(normalize_os "$(uname -s)")"
 TARGET="${ARCH}-${PLATFORM}"
+validate_target "$TARGET"
 ASSET_NAME="${BINARY_NAME}-${TARGET}.tar.gz"
 DOWNLOAD_URL="$(build_download_url "$ASSET_NAME")"
 TMP_DIR="$(mktemp -d)"

@@ -15,7 +15,7 @@ function Get-TargetTriple {
     $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
     switch ($arch.ToString()) {
         'X64' { return 'x86_64-pc-windows-msvc' }
-        'Arm64' { return 'aarch64-pc-windows-msvc' }
+        'Arm64' { throw 'Windows Arm64 binaries are not published yet.' }
         default { throw "Unsupported Windows architecture: $arch" }
     }
 }
