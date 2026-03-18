@@ -335,7 +335,31 @@ fn validate_tar_entry_type(entry_type: tar::EntryType) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    bail!("tar entry type is not supported for self-update extraction")
+    bail!(
+        "tar entry type '{}' is not supported for self-update extraction",
+        tar_entry_type_label(entry_type)
+    )
+}
+
+fn tar_entry_type_label(entry_type: tar::EntryType) -> String {
+    let raw = entry_type.as_byte();
+    let kind = if entry_type.is_symlink() {
+        "symlink"
+    } else if entry_type.is_hard_link() {
+        "hardlink"
+    } else if entry_type.is_pax_global_extensions() {
+        "pax-global-extensions"
+    } else if entry_type.is_pax_local_extensions() {
+        "pax-local-extensions"
+    } else if entry_type.is_gnu_longname() {
+        "gnu-longname"
+    } else if entry_type.is_gnu_longlink() {
+        "gnu-longlink"
+    } else {
+        "special"
+    };
+
+    format!("{kind} (byte 0x{raw:02x})")
 }
 
 fn current_target_triple() -> anyhow::Result<&'static str> {
@@ -456,9 +480,13 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_tar_entry_types() {
+        // b'0' = regular file
         assert!(validate_tar_entry_type(tar::EntryType::new(b'0')).is_ok());
+        // b'5' = directory
         assert!(validate_tar_entry_type(tar::EntryType::new(b'5')).is_ok());
+        // b'2' = symlink
         assert!(validate_tar_entry_type(tar::EntryType::new(b'2')).is_err());
+        // b'1' = hardlink
         assert!(validate_tar_entry_type(tar::EntryType::new(b'1')).is_err());
     }
 }
