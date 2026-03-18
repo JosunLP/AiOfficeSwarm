@@ -410,7 +410,7 @@ fn extract_zip_archive(archive_path: &Path, extract_dir: &Path) -> anyhow::Resul
             .by_index(index)
             .with_context(|| format!("Failed to read ZIP entry #{}", index))?;
         let Some(relative_path) = entry.enclosed_name().map(|path| path.to_owned()) else {
-            anyhow::bail!(
+            bail!(
                 "ZIP archive '{}' contains unsafe entry #{} path '{}'; aborting update",
                 archive_path.display(),
                 index,
