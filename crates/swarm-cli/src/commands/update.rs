@@ -405,7 +405,11 @@ fn executable_name() -> &'static str {
 }
 
 fn normalize_version(version: &str) -> &str {
-    version.trim().trim_start_matches('v')
+    let trimmed = version.trim();
+    match trimmed.strip_prefix('v') {
+        Some(stripped) if Version::parse(stripped).is_ok() => stripped,
+        _ => trimmed,
+    }
 }
 
 fn normalize_tag(version: &str) -> String {
@@ -467,6 +471,7 @@ mod tests {
     fn normalizes_versions_and_tags() {
         assert_eq!(normalize_version("v0.2.1"), "0.2.1");
         assert_eq!(normalize_version("0.2.1"), "0.2.1");
+        assert_eq!(normalize_version("vnext"), "vnext");
         assert_eq!(normalize_tag("0.2.1"), "v0.2.1");
         assert_eq!(normalize_tag("v0.2.1"), "v0.2.1");
         assert_eq!(normalize_tag("release-2026-03-18"), "release-2026-03-18");
@@ -510,6 +515,16 @@ mod tests {
                 Some(Ordering::Less)
             ),
             "Current version: 1.3.0\nAvailable version: 1.2.0\nRelease: https://example.invalid/releases/v1.2.0\nNo update required: the running build is newer than the latest published release."
+        );
+        assert_eq!(
+            format_check_report(
+                "1.0.0",
+                "vnext",
+                "https://example.invalid/releases/vnext",
+                "vnext",
+                None
+            ),
+            "Current version: 1.0.0\nAvailable version: vnext\nRelease: https://example.invalid/releases/vnext\nUnable to compare versions automatically for release tag 'vnext'. Try `swarm update --version vnext` to target that release explicitly."
         );
         assert_eq!(
             format_check_report(
