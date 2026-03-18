@@ -1,3 +1,4 @@
+# Keep the fallback copies in install.ps1 and uninstall.ps1 in sync with this function.
 function Normalize-PathEntry {
     param([string]$PathEntry)
 

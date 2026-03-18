@@ -10,6 +10,7 @@ if (Test-Path $pathUtilsPath) {
     . $pathUtilsPath
 }
 
+# Keep this fallback in sync with scripts/path-utils.ps1 for one-file downloads.
 if (-not (Get-Command Normalize-PathEntry -CommandType Function -ErrorAction SilentlyContinue)) {
     function Normalize-PathEntry {
         param([string]$PathEntry)
