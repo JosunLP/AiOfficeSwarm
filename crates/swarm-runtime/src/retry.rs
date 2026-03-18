@@ -148,15 +148,15 @@ mod tests {
     #[test]
     fn jittered_delay_respects_max_delay_cap() {
         let policy = RetryPolicy {
-            max_attempts: 2,
-            initial_delay: Duration::from_millis(50),
+            max_attempts: 3,
+            initial_delay: Duration::from_millis(5),
             max_delay: Duration::from_millis(10),
-            strategy: RetryStrategy::Fixed,
+            strategy: RetryStrategy::ExponentialBackoff { multiplier: 10.0 },
         };
         let executor = RetryExecutor::new(policy.clone());
 
         for _ in 0..32 {
-            assert!(executor.delay_before_retry(1) <= policy.max_delay);
+            assert!(executor.delay_before_retry(2) <= policy.max_delay);
         }
     }
 }
