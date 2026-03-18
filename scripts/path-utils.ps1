@@ -1,4 +1,4 @@
-# Keep the fallback copies in install.ps1 and uninstall.ps1 in sync with this function.
+# Keep the fallback copies in install.ps1 and uninstall.ps1 in sync with these functions.
 function Normalize-PathEntry {
     param([string]$PathEntry)
 
@@ -26,4 +26,25 @@ function Normalize-PathEntry {
     }
 
     return $normalizedPath
+}
+
+function Resolve-InstallDir {
+    param(
+        [string]$RequestedInstallDir,
+        [string]$ScriptLabel = 'script'
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedInstallDir)) {
+        return $RequestedInstallDir.Trim()
+    }
+
+    if ($env:LOCALAPPDATA) {
+        return (Join-Path $env:LOCALAPPDATA 'AiOfficeSwarm\bin')
+    }
+
+    if ($env:HOME) {
+        return (Join-Path $env:HOME 'AppData\Local\AiOfficeSwarm\bin')
+    }
+
+    throw "Set SWARM_INSTALL_DIR, LOCALAPPDATA, or HOME before running this $ScriptLabel."
 }

@@ -119,6 +119,7 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
     let temp_root_for_extract = temp_dir.path().to_path_buf();
     let binary_path = task::spawn_blocking(move || {
         extract_binary(&archive_path_for_extract, &temp_root_for_extract)
+            .context("Failed to extract the downloaded update archive")
     })
     .await
     .context("Update extraction task failed")??;
@@ -256,9 +257,11 @@ async fn verify_asset_checksum(
         )
     })?;
     let archive_path = archive_path.to_path_buf();
-    let actual_checksum = task::spawn_blocking(move || sha256_digest(&archive_path))
-        .await
-        .context("Checksum verification task failed")??;
+    let actual_checksum = task::spawn_blocking(move || {
+        sha256_digest(&archive_path).context("Failed to compute the downloaded archive checksum")
+    })
+    .await
+    .context("Checksum verification task failed")??;
 
     if actual_checksum != expected_checksum {
         bail!(
