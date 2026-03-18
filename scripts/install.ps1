@@ -1,6 +1,6 @@
 param(
     [string]$Version = "latest",
-    [string]$InstallDir = $(if ($env:SWARM_INSTALL_DIR) { $env:SWARM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'AiOfficeSwarm\bin' }),
+    [string]$InstallDir = $env:SWARM_INSTALL_DIR,
     [switch]$SkipPathUpdate
 )
 
@@ -10,7 +10,7 @@ if (Test-Path $pathUtilsPath) {
     . $pathUtilsPath
 }
 
-# Keep this fallback in sync with scripts/path-utils.ps1 for one-file downloads.
+# Keep these fallback functions in sync with scripts/path-utils.ps1 for one-file downloads.
 if (-not (Get-Command Normalize-PathEntry -CommandType Function -ErrorAction SilentlyContinue)) {
     function Normalize-PathEntry {
         param([string]$PathEntry)
@@ -39,6 +39,29 @@ if (-not (Get-Command Normalize-PathEntry -CommandType Function -ErrorAction Sil
         }
 
         return $normalizedPath
+    }
+}
+
+if (-not (Get-Command Resolve-InstallDir -CommandType Function -ErrorAction SilentlyContinue)) {
+    function Resolve-InstallDir {
+        param(
+            [string]$RequestedInstallDir,
+            [string]$ScriptLabel = 'script'
+        )
+
+        if (-not [string]::IsNullOrWhiteSpace($RequestedInstallDir)) {
+            return $RequestedInstallDir.Trim()
+        }
+
+        if ($env:LOCALAPPDATA) {
+            return (Join-Path $env:LOCALAPPDATA 'AiOfficeSwarm\bin')
+        }
+
+        if ($env:HOME) {
+            return (Join-Path $env:HOME 'AppData\Local\AiOfficeSwarm\bin')
+        }
+
+        throw "Set SWARM_INSTALL_DIR, LOCALAPPDATA, or HOME before running this $ScriptLabel."
     }
 }
 
@@ -126,6 +149,7 @@ function Add-ToUserPath {
     Write-Info "Added $PathEntry to the user PATH."
 }
 
+$InstallDir = Resolve-InstallDir -RequestedInstallDir $InstallDir -ScriptLabel 'installer'
 $target = Get-TargetTriple
 $assetName = "swarm-$target.zip"
 $checksumsName = 'SHA256SUMS'

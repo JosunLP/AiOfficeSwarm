@@ -15,7 +15,7 @@ use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use swarm_config::SwarmConfig;
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, task};
 use walkdir::WalkDir;
 
 const REPO_OWNER: &str = "JosunLP";
@@ -115,7 +115,14 @@ pub async fn run(args: UpdateArgs, _config: &SwarmConfig) -> anyhow::Result<()> 
         temp_dir.path(),
     )
     .await?;
-    let binary_path = extract_binary(&archive_path, temp_dir.path())?;
+    let archive_path_for_extract = archive_path.clone();
+    let temp_root_for_extract = temp_dir.path().to_path_buf();
+    let binary_path = task::spawn_blocking(move || {
+        extract_binary(&archive_path_for_extract, &temp_root_for_extract)
+            .context("Failed to extract the downloaded update archive")
+    })
+    .await
+    .context("Update extraction task failed")??;
 
     self_replace::self_replace(&binary_path)
         .with_context(|| format!("Failed to replace '{}' with the new version", BIN_NAME))?;
@@ -234,12 +241,14 @@ async fn verify_asset_checksum(
     )
     .await?;
 
-    let checksums = fs::read_to_string(&checksums_path).with_context(|| {
-        format!(
-            "Failed to read checksum file '{}'",
-            checksums_path.display()
-        )
-    })?;
+    let checksums = tokio::fs::read_to_string(&checksums_path)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to read checksum file '{}'",
+                checksums_path.display()
+            )
+        })?;
     let expected_checksum = checksum_for_asset(&checksums, asset_name).with_context(|| {
         format!(
             "Failed to find a checksum entry for '{}' in '{}'",
@@ -247,7 +256,12 @@ async fn verify_asset_checksum(
             checksums_path.display()
         )
     })?;
-    let actual_checksum = sha256_digest(archive_path)?;
+    let archive_path = archive_path.to_path_buf();
+    let actual_checksum = task::spawn_blocking(move || {
+        sha256_digest(&archive_path).context("Failed to compute the downloaded archive checksum")
+    })
+    .await
+    .context("Checksum verification task failed")??;
 
     if actual_checksum != expected_checksum {
         bail!(

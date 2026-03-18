@@ -13,7 +13,7 @@ Each agent is defined as an independent role with a clear mission, responsibilit
 
 ## Components
 
-- `ORGANIGRAMM.md`: leadership and reporting structure
+- `ORGANIGRAM.md`: leadership and reporting structure
 - individual Markdown files for each agent
 - a consistent structure across all role profiles
 

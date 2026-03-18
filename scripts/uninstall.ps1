@@ -1,16 +1,15 @@
 param(
-    [string]$InstallDir = $(if ($env:SWARM_INSTALL_DIR) { $env:SWARM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'AiOfficeSwarm\bin' }),
+    [string]$InstallDir = $env:SWARM_INSTALL_DIR,
     [switch]$KeepPath
 )
 
 $ErrorActionPreference = 'Stop'
-$binaryPath = Join-Path $InstallDir 'swarm.exe'
 $pathUtilsPath = Join-Path $PSScriptRoot 'path-utils.ps1'
 if (Test-Path $pathUtilsPath) {
     . $pathUtilsPath
 }
 
-# Keep this fallback in sync with scripts/path-utils.ps1 for one-file downloads.
+# Keep these fallback functions in sync with scripts/path-utils.ps1 for one-file downloads.
 if (-not (Get-Command Normalize-PathEntry -CommandType Function -ErrorAction SilentlyContinue)) {
     function Normalize-PathEntry {
         param([string]$PathEntry)
@@ -42,6 +41,29 @@ if (-not (Get-Command Normalize-PathEntry -CommandType Function -ErrorAction Sil
     }
 }
 
+if (-not (Get-Command Resolve-InstallDir -CommandType Function -ErrorAction SilentlyContinue)) {
+    function Resolve-InstallDir {
+        param(
+            [string]$RequestedInstallDir,
+            [string]$ScriptLabel = 'script'
+        )
+
+        if (-not [string]::IsNullOrWhiteSpace($RequestedInstallDir)) {
+            return $RequestedInstallDir.Trim()
+        }
+
+        if ($env:LOCALAPPDATA) {
+            return (Join-Path $env:LOCALAPPDATA 'AiOfficeSwarm\bin')
+        }
+
+        if ($env:HOME) {
+            return (Join-Path $env:HOME 'AppData\Local\AiOfficeSwarm\bin')
+        }
+
+        throw "Set SWARM_INSTALL_DIR, LOCALAPPDATA, or HOME before running this $ScriptLabel."
+    }
+}
+
 function Write-Info {
     param([string]$Message)
     Write-Host $Message -ForegroundColor Cyan
@@ -68,6 +90,9 @@ function Remove-FromUserPath {
     [Environment]::SetEnvironmentVariable('Path', ($entries -join ';'), 'User')
     Write-Info "Removed $PathEntry from the user PATH."
 }
+
+$InstallDir = Resolve-InstallDir -RequestedInstallDir $InstallDir -ScriptLabel 'uninstaller'
+$binaryPath = Join-Path $InstallDir 'swarm.exe'
 
 if (Test-Path $binaryPath) {
     Remove-Item -Path $binaryPath -Force
