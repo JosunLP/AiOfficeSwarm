@@ -1,6 +1,6 @@
 param(
     [string]$Version = "latest",
-    [string]$InstallDir = $(if ($env:SWARM_INSTALL_DIR) { $env:SWARM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'AiOfficeSwarm\bin' }),
+    [string]$InstallDir = $env:SWARM_INSTALL_DIR,
     [switch]$SkipPathUpdate
 )
 
@@ -45,6 +45,24 @@ if (-not (Get-Command Normalize-PathEntry -CommandType Function -ErrorAction Sil
 function Write-Info {
     param([string]$Message)
     Write-Host $Message -ForegroundColor Cyan
+}
+
+function Resolve-InstallDir {
+    param([string]$RequestedInstallDir)
+
+    if ($RequestedInstallDir) {
+        return $RequestedInstallDir
+    }
+
+    if ($env:LOCALAPPDATA) {
+        return (Join-Path $env:LOCALAPPDATA 'AiOfficeSwarm\bin')
+    }
+
+    if ($env:HOME) {
+        return (Join-Path $env:HOME 'AppData\Local\AiOfficeSwarm\bin')
+    }
+
+    throw 'Set SWARM_INSTALL_DIR, LOCALAPPDATA, or HOME before running this installer.'
 }
 
 function Get-TargetTriple {
@@ -126,6 +144,7 @@ function Add-ToUserPath {
     Write-Info "Added $PathEntry to the user PATH."
 }
 
+$InstallDir = Resolve-InstallDir -RequestedInstallDir $InstallDir
 $target = Get-TargetTriple
 $assetName = "swarm-$target.zip"
 $checksumsName = 'SHA256SUMS'

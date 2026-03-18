@@ -1,10 +1,9 @@
 param(
-    [string]$InstallDir = $(if ($env:SWARM_INSTALL_DIR) { $env:SWARM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'AiOfficeSwarm\bin' }),
+    [string]$InstallDir = $env:SWARM_INSTALL_DIR,
     [switch]$KeepPath
 )
 
 $ErrorActionPreference = 'Stop'
-$binaryPath = Join-Path $InstallDir 'swarm.exe'
 $pathUtilsPath = Join-Path $PSScriptRoot 'path-utils.ps1'
 if (Test-Path $pathUtilsPath) {
     . $pathUtilsPath
@@ -47,6 +46,24 @@ function Write-Info {
     Write-Host $Message -ForegroundColor Cyan
 }
 
+function Resolve-InstallDir {
+    param([string]$RequestedInstallDir)
+
+    if ($RequestedInstallDir) {
+        return $RequestedInstallDir
+    }
+
+    if ($env:LOCALAPPDATA) {
+        return (Join-Path $env:LOCALAPPDATA 'AiOfficeSwarm\bin')
+    }
+
+    if ($env:HOME) {
+        return (Join-Path $env:HOME 'AppData\Local\AiOfficeSwarm\bin')
+    }
+
+    throw 'Set SWARM_INSTALL_DIR, LOCALAPPDATA, or HOME before running this uninstaller.'
+}
+
 function Remove-FromUserPath {
     param([string]$PathEntry)
 
@@ -68,6 +85,9 @@ function Remove-FromUserPath {
     [Environment]::SetEnvironmentVariable('Path', ($entries -join ';'), 'User')
     Write-Info "Removed $PathEntry from the user PATH."
 }
+
+$InstallDir = Resolve-InstallDir -RequestedInstallDir $InstallDir
+$binaryPath = Join-Path $InstallDir 'swarm.exe'
 
 if (Test-Path $binaryPath) {
     Remove-Item -Path $binaryPath -Force
