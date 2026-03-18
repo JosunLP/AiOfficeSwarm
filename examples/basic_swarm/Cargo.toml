@@ -1,0 +1,28 @@
+[package]
+name = "basic_swarm"
+description = "Basic usage example showing agent registration, task submission, and execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "basic_swarm"
+path = "src/main.rs"
+
+[dependencies]
+swarm-core = { workspace = true }
+swarm-orchestrator = { workspace = true }
+swarm-policy = { workspace = true }
+swarm-plugin = { workspace = true }
+swarm-config = { workspace = true }
+swarm-telemetry = { workspace = true }
+swarm-runtime = { workspace = true }
+example-integration = { path = "../../plugins/example-integration" }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }

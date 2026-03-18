@@ -1,0 +1,27 @@
+[package]
+name    = "echo-plugin"
+version = "0.1.0"
+edition = "2021"
+description = "Example AiOfficeSwarm WASM plugin (echo actions)"
+license = "MIT OR Apache-2.0"
+
+# This crate is built as a cdylib for wasm32-unknown-unknown.
+# It is NOT part of the workspace because it must be compiled with a separate
+# target (wasm32-unknown-unknown) and would break standard workspace builds.
+#
+# Build with:
+#   cargo build --target wasm32-unknown-unknown --release
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Minimal allocator for no_std WASM targets.
+wee_alloc = "0.4"
+
+[profile.release]
+# Aggressive size optimisation for WASM.
+opt-level  = "z"
+lto        = true
+strip      = true
+panic      = "abort"

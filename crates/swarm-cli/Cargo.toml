@@ -1,0 +1,29 @@
+[package]
+name = "swarm-cli"
+description = "CLI management interface for the AiOfficeSwarm framework"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "swarm"
+path = "src/main.rs"
+
+[dependencies]
+swarm-core = { workspace = true }
+swarm-orchestrator = { workspace = true }
+swarm-policy = { workspace = true }
+swarm-plugin = { workspace = true }
+swarm-config = { workspace = true }
+swarm-telemetry = { workspace = true }
+swarm-runtime = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
