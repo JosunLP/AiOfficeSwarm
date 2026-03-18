@@ -100,7 +100,7 @@ impl std::fmt::Display for WasmPermission {
 
 /// The static manifest that every plugin must provide.
 ///
-/// The host reads and registers this metadata before calling [`Plugin::on_load`].
+/// The host reads and registers this metadata before calling [`crate::Plugin::on_load`].
 /// Compatibility and permission enforcement are embedding-application managed
 /// today rather than automatically validated by [`crate::PluginHost`].
 #[derive(Debug, Clone, Serialize, Deserialize)]

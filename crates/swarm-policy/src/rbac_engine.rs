@@ -1,8 +1,8 @@
 //! RBAC enforcement engine.
 //!
 //! The [`RbacEngine`] manages the assignment of [`Role`]s to [`Subject`]s and
-//! provides permission checking. It is used by the policy engine (via a
-//! dedicated RBAC policy) and can also be queried directly.
+//! provides permission checking. Embedding applications can use it directly for
+//! authorization decisions or wrap it in a future policy implementation.
 
 use dashmap::DashMap;
 use std::collections::HashSet;

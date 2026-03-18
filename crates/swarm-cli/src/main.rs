@@ -15,6 +15,9 @@
 //!   demo     Run a built-in demonstration swarm
 //! ```
 
+#![forbid(unsafe_code)]
+#![warn(missing_docs, clippy::all)]
+
 use clap::{Parser, Subcommand};
 
 mod commands;
