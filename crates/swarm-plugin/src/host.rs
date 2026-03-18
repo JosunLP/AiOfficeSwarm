@@ -97,6 +97,22 @@ impl PluginHost {
         action: &str,
         params: serde_json::Value,
     ) -> SwarmResult<serde_json::Value> {
+        let state = self
+            .registry
+            .get(plugin_id)
+            .ok_or_else(|| SwarmError::PluginOperationFailed {
+                name: plugin_id.to_string(),
+                reason: "plugin not loaded".into(),
+            })?
+            .state;
+
+        if !state.is_active() {
+            return Err(SwarmError::PluginOperationFailed {
+                name: plugin_id.to_string(),
+                reason: format!("plugin is {}", state.label()),
+            });
+        }
+
         let instance = self
             .instances
             .get(plugin_id)
@@ -107,6 +123,22 @@ impl PluginHost {
             })?;
 
         let mut plugin = instance.lock().await;
+        let state = self
+            .registry
+            .get(plugin_id)
+            .ok_or_else(|| SwarmError::PluginOperationFailed {
+                name: plugin_id.to_string(),
+                reason: "plugin not loaded".into(),
+            })?
+            .state;
+
+        if !state.is_active() {
+            return Err(SwarmError::PluginOperationFailed {
+                name: plugin_id.to_string(),
+                reason: format!("plugin is {}", state.label()),
+            });
+        }
+
         let name = plugin.manifest().name.clone();
         plugin.invoke(action, params).await.map_err(|e| {
             SwarmError::PluginOperationFailed {
@@ -118,7 +150,7 @@ impl PluginHost {
 
     /// Unload a plugin gracefully.
     pub async fn unload(&self, plugin_id: &PluginId) -> SwarmResult<()> {
-        let (_, instance) = self.instances.remove(plugin_id).ok_or_else(|| {
+        let instance = self.instances.get(plugin_id).map(|entry| Arc::clone(entry.value())).ok_or_else(|| {
             SwarmError::PluginOperationFailed {
                 name: plugin_id.to_string(),
                 reason: "plugin not loaded".into(),
@@ -131,6 +163,7 @@ impl PluginHost {
 
         match plugin.on_unload().await {
             Ok(()) => {
+                self.instances.remove(plugin_id);
                 self.registry.update_state(plugin_id, PluginState::Unloaded)?;
                 tracing::info!(plugin_id = %plugin_id, name = %name, "Plugin unloaded");
                 Ok(())
@@ -142,6 +175,7 @@ impl PluginHost {
                     error = e.to_string(),
                     "Plugin unload produced an error (continuing)"
                 );
+                self.instances.remove(plugin_id);
                 self.registry.update_state(plugin_id, PluginState::Unloaded)?;
                 Ok(())
             }
@@ -278,5 +312,44 @@ mod tests {
             host.registry().get(&plugin_id).expect("plugin should be reloaded").state.label(),
             "active"
         );
+    }
+
+    #[tokio::test]
+    async fn invoke_rejects_once_unload_starts_even_if_instance_was_already_cloned() {
+        let host = Arc::new(PluginHost::new());
+        let plugin_id = host.load(Box::new(EchoPlugin::new())).await.unwrap();
+        let instance = host
+            .instances
+            .get(&plugin_id)
+            .map(|entry| Arc::clone(entry.value()))
+            .expect("instance should exist after load");
+
+        let guard = instance.lock().await;
+
+        let invoke_host = Arc::clone(&host);
+        let invoke_plugin_id = plugin_id;
+        let invoke_task = tokio::spawn(async move {
+            invoke_host
+                .invoke(&invoke_plugin_id, "echo", serde_json::json!({"msg": "hello"}))
+                .await
+        });
+
+        tokio::task::yield_now().await;
+
+        let unload_host = Arc::clone(&host);
+        let unload_plugin_id = plugin_id;
+        let unload_task = tokio::spawn(async move { unload_host.unload(&unload_plugin_id).await });
+
+        tokio::task::yield_now().await;
+        drop(guard);
+
+        let invoke_result = invoke_task.await.unwrap();
+        assert!(matches!(
+            invoke_result,
+            Err(SwarmError::PluginOperationFailed { reason, .. }) if reason == "plugin is unloading"
+        ));
+
+        unload_task.await.unwrap().unwrap();
+        assert_eq!(host.registry().get(&plugin_id).unwrap().state.label(), "unloaded");
     }
 }

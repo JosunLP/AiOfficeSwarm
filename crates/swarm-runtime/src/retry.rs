@@ -28,6 +28,15 @@ impl RetryExecutor {
         Self { policy, jitter: false }
     }
 
+    fn delay_before_retry(&self, attempt: u32) -> Duration {
+        let delay = self.policy.delay_for_attempt(attempt);
+        if self.jitter {
+            add_jitter(delay).min(self.policy.max_delay)
+        } else {
+            delay
+        }
+    }
+
     /// Execute `f` with automatic retries.
     ///
     /// Only [`SwarmError::is_retryable`] errors trigger a retry. Non-retryable
@@ -46,10 +55,7 @@ impl RetryExecutor {
                 }
                 Err(e) => {
                     attempt += 1;
-                    let mut delay = self.policy.delay_for_attempt(attempt);
-                    if self.jitter {
-                        delay = add_jitter(delay);
-                    }
+                    let delay = self.delay_before_retry(attempt);
                     tracing::warn!(
                         attempt = attempt,
                         max_attempts = self.policy.max_attempts,
@@ -137,5 +143,20 @@ mod tests {
         }).await;
         assert_eq!(result.unwrap(), 99);
         assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn jittered_delay_respects_max_delay_cap() {
+        let policy = RetryPolicy {
+            max_attempts: 2,
+            initial_delay: Duration::from_millis(50),
+            max_delay: Duration::from_millis(10),
+            strategy: RetryStrategy::Fixed,
+        };
+        let executor = RetryExecutor::new(policy.clone());
+
+        for _ in 0..32 {
+            assert!(executor.delay_before_retry(1) <= policy.max_delay);
+        }
     }
 }
