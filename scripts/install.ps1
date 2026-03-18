@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'path-utils.ps1')
 
 function Write-Info {
     param([string]$Message)
@@ -61,30 +62,6 @@ function Get-ExpectedChecksum {
     }
 
     throw "Checksum for $AssetName not found in $ChecksumFile"
-}
-
-function Normalize-PathEntry {
-    param([string]$PathEntry)
-
-    if ([string]::IsNullOrWhiteSpace($PathEntry)) {
-        return ''
-    }
-
-    $expandedPath = [Environment]::ExpandEnvironmentVariables($PathEntry.Trim().Trim('"'))
-
-    try {
-        $normalizedPath = [System.IO.Path]::GetFullPath($expandedPath)
-    }
-    catch {
-        $normalizedPath = $expandedPath
-    }
-
-    $pathRoot = [System.IO.Path]::GetPathRoot($normalizedPath)
-    if ($pathRoot -and -not $normalizedPath.Equals($pathRoot, [System.StringComparison]::Ordinal)) {
-        $normalizedPath = $normalizedPath.TrimEnd('\', '/')
-    }
-
-    return $normalizedPath
 }
 
 function Add-ToUserPath {
