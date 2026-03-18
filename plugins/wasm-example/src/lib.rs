@@ -56,8 +56,41 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 // On wasm32-unknown-unknown there is no default global allocator.
 // We use `wee_alloc` for a minimal footprint (see Cargo.toml).
 #[cfg(target_arch = "wasm32")]
+struct TrapOnOomAlloc;
+
+#[cfg(target_arch = "wasm32")]
+impl TrapOnOomAlloc {
+    fn trap_on_null(ptr: *mut u8) -> *mut u8 {
+        if ptr.is_null() {
+            core::arch::wasm32::unreachable()
+        }
+        ptr
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe impl core::alloc::GlobalAlloc for TrapOnOomAlloc {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        Self::trap_on_null(wee_alloc::WeeAlloc::INIT.alloc(layout))
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+        wee_alloc::WeeAlloc::INIT.dealloc(ptr, layout);
+    }
+
+    unsafe fn realloc(
+        &self,
+        ptr: *mut u8,
+        layout: core::alloc::Layout,
+        new_size: usize,
+    ) -> *mut u8 {
+        Self::trap_on_null(wee_alloc::WeeAlloc::INIT.realloc(ptr, layout, new_size))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 #[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+static ALLOC: TrapOnOomAlloc = TrapOnOomAlloc;
 
 const BUFFER_TOO_SMALL_ERROR_MSG: &[u8] = b"Result buffer too small";
 

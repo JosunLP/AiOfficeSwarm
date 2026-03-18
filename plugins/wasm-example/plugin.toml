@@ -43,4 +43,4 @@ description = "Returns the input JSON unchanged."
 
 [[plugin.actions]]
 name        = "ping"
-description = "Returns {\"pong\": true}."
+description = "Returns {\"pong\":true}."
