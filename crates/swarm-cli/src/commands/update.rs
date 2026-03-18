@@ -412,8 +412,10 @@ fn normalize_tag(version: &str) -> String {
     let trimmed = version.trim();
     if trimmed.starts_with('v') {
         trimmed.to_owned()
-    } else {
+    } else if Version::parse(trimmed).is_ok() {
         format!("v{trimmed}")
+    } else {
+        trimmed.to_owned()
     }
 }
 
@@ -467,6 +469,7 @@ mod tests {
         assert_eq!(normalize_version("0.2.1"), "0.2.1");
         assert_eq!(normalize_tag("0.2.1"), "v0.2.1");
         assert_eq!(normalize_tag("v0.2.1"), "v0.2.1");
+        assert_eq!(normalize_tag("release-2026-03-18"), "release-2026-03-18");
     }
 
     #[test]

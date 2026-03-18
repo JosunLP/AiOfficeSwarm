@@ -96,7 +96,7 @@ case "$DOWNLOAD_TOOL" in
     wget -q -O "$ARCHIVE_PATH" "$DOWNLOAD_URL"
     ;;
   *)
-    fail "Unknown download command"
+    fail "Unknown download tool"
     ;;
 esac
 
