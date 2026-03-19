@@ -1,0 +1,41 @@
+[package]
+name = "swarm-role"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "First-class role management subsystem for the AiOfficeSwarm framework"
+keywords = ["ai", "agents", "roles", "governance", "enterprise"]
+categories = ["asynchronous", "concurrency"]
+
+[dependencies]
+swarm-core = { workspace = true }
+
+# Optional integrations with sibling crates (enabled via features)
+swarm-personality = { workspace = true, optional = true }
+swarm-memory = { workspace = true, optional = true }
+swarm-learning = { workspace = true, optional = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+dashmap = { workspace = true }
+
+# Markdown parsing for role file ingestion
+regex = "1.10"
+
+[features]
+default = ["personality", "memory", "learning"]
+personality = ["dep:swarm-personality"]
+memory = ["dep:swarm-memory"]
+learning = ["dep:swarm-learning"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

@@ -6,11 +6,10 @@
 //! 1. **Capability matching**: the agent must possess all capabilities listed
 //!    in `task.spec.required_capabilities`.
 //! 2. **Availability**: the agent must be in the `Ready` state.
-//! 3. **Load balancing**: when multiple agents qualify, the one with the fewest
+//! 3. **Role affinity**: when a task specifies a `role_hint`, agents with a
+//!    matching `role_id` are preferred.
+//! 4. **Load balancing**: when multiple agents qualify, the one with the fewest
 //!    completed tasks (least-loaded) is preferred (simple bin-packing heuristic).
-//!
-//! Future versions may incorporate more sophisticated scheduling strategies
-//! (e.g., affinity rules, cost models, deadline-aware scheduling).
 
 use swarm_core::{error::SwarmResult, identity::AgentId, task::Task};
 
@@ -53,8 +52,18 @@ impl Scheduler {
     ///
     /// Returns [`SchedulingDecision::Assigned`] if a suitable agent was found,
     /// or [`SchedulingDecision::NoCapableAgent`] otherwise.
+    ///
+    /// When the task metadata contains a `role_hint` key, the scheduler
+    /// prefers agents whose `role_id` matches. If no role-matching agent
+    /// is available, any capable agent is used as a fallback.
     pub fn schedule(&self, task: &Task) -> SwarmResult<SchedulingDecision> {
         let required = &task.spec.required_capabilities;
+
+        let role_hint: Option<String> = task
+            .spec
+            .metadata
+            .get("role_hint")
+            .map(|s| s.to_lowercase());
 
         // Collect candidates: agents that are available AND have the required capabilities.
         let mut candidates: Vec<_> = self
@@ -75,14 +84,37 @@ impl Scheduler {
             return Ok(SchedulingDecision::NoCapableAgent { task_id: task.id });
         }
 
-        // Least-loaded heuristic: prefer agents with fewer completed tasks.
-        candidates.sort_by_key(|r| r.tasks_completed);
+        // Role-affinity scoring: prefer agents whose role_id matches the hint.
+        if let Some(ref hint) = role_hint {
+            candidates.sort_by(|a, b| {
+                let a_match = a
+                    .descriptor
+                    .role_id
+                    .as_ref()
+                    .map(|r| r.to_lowercase() == *hint)
+                    .unwrap_or(false);
+                let b_match = b
+                    .descriptor
+                    .role_id
+                    .as_ref()
+                    .map(|r| r.to_lowercase() == *hint)
+                    .unwrap_or(false);
+                // Sort role matches first (true > false → reversed).
+                b_match
+                    .cmp(&a_match)
+                    .then_with(|| a.tasks_completed.cmp(&b.tasks_completed))
+            });
+        } else {
+            // Least-loaded heuristic: prefer agents with fewer completed tasks.
+            candidates.sort_by_key(|r| r.tasks_completed);
+        }
 
         let chosen = &candidates[0];
         tracing::info!(
             task_id = %task.id,
             agent_id = %chosen.descriptor.id,
             agent_name = %chosen.descriptor.name,
+            role_id = ?chosen.descriptor.role_id,
             "Task scheduled to agent"
         );
 

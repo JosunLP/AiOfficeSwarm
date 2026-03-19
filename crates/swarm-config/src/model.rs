@@ -18,6 +18,8 @@ pub struct SwarmConfig {
     pub telemetry: TelemetryConfig,
     /// Plugin loading settings.
     pub plugins: PluginsConfig,
+    /// Role loading settings.
+    pub roles: RolesConfig,
 }
 
 impl Default for SwarmConfig {
@@ -27,6 +29,7 @@ impl Default for SwarmConfig {
             orchestrator: OrchestratorConfig::default(),
             telemetry: TelemetryConfig::default(),
             plugins: PluginsConfig::default(),
+            roles: RolesConfig::default(),
         }
     }
 }
@@ -102,4 +105,26 @@ pub struct PluginsConfig {
     pub plugin_dir: Option<String>,
     /// Whether to auto-load plugins found in `plugin_dir` on startup.
     pub auto_load: bool,
+}
+
+/// Role subsystem configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RolesConfig {
+    /// Directory containing role definition files.
+    pub roles_dir: Option<String>,
+    /// Whether to auto-load roles on startup.
+    pub auto_load: bool,
+    /// Whether to reject roles with validation errors (true) or log warnings and continue (false).
+    pub strict_validation: bool,
+}
+
+impl Default for RolesConfig {
+    fn default() -> Self {
+        Self {
+            roles_dir: Some("roles".into()),
+            auto_load: true,
+            strict_validation: false,
+        }
+    }
 }

@@ -194,6 +194,10 @@ pub struct AgentDescriptor {
     pub registered_at: DateTime<Utc>,
 
     // ── Cognition fields (v2) ──────────────────────────────────────────
+    /// Optional role identifier. When set, the role registry is consulted
+    /// to load the role specification and apply role-derived policies,
+    /// personality overlays, and governance constraints.
+    pub role_id: Option<String>,
     /// Optional personality profile ID. If set, the personality registry
     /// is consulted to load the profile at task dispatch time.
     pub personality_id: Option<String>,
@@ -223,6 +227,7 @@ impl AgentDescriptor {
             metadata: Metadata::new(),
             registered_at: Utc::now(),
             // Cognition defaults
+            role_id: None,
             personality_id: None,
             memory_profile: MemoryAccessProfileRef::default(),
             learning_policy: LearningPolicyRef::default(),

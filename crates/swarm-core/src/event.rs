@@ -176,6 +176,29 @@ pub enum EventKind {
         /// Task ID.
         task_id: TaskId,
     },
+
+    // ── Role events ─────────────────────────────────────────────────────
+    /// A role was loaded and registered.
+    RoleLoaded {
+        /// Role name.
+        role_name: String,
+        /// Department.
+        department: String,
+    },
+    /// A role was assigned to an agent.
+    RoleAssigned {
+        /// Agent ID.
+        agent_id: AgentId,
+        /// Role name.
+        role_name: String,
+    },
+    /// A role was unassigned from an agent.
+    RoleUnassigned {
+        /// Agent ID.
+        agent_id: AgentId,
+        /// Role name.
+        role_name: String,
+    },
 }
 
 /// A domain event that has been observed in the system.

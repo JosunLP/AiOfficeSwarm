@@ -12,6 +12,7 @@ members = [
     "crates/swarm-personality",
     "crates/swarm-memory",
     "crates/swarm-learning",
+    "crates/swarm-role",
     "plugins/example-integration",
     "examples/basic_swarm",
 ]
@@ -44,7 +45,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 
 # Unique identifiers
-uuid = { version = "1.7", features = ["v4", "serde"] }
+uuid = { version = "1.7", features = ["v4", "v5", "serde"] }
 
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
@@ -77,6 +78,10 @@ swarm-provider = { path = "crates/swarm-provider" }
 swarm-personality = { path = "crates/swarm-personality" }
 swarm-memory = { path = "crates/swarm-memory" }
 swarm-learning = { path = "crates/swarm-learning" }
+swarm-role = { path = "crates/swarm-role" }
+
+# Regex for role file parsing
+regex = "1.10"
 
 [profile.release]
 lto = true

@@ -20,6 +20,7 @@ swarm-plugin = { workspace = true }
 swarm-config = { workspace = true }
 swarm-telemetry = { workspace = true }
 swarm-runtime = { workspace = true }
+swarm-role = { workspace = true }
 example-integration = { path = "../../plugins/example-integration" }
 tokio = { workspace = true }
 serde_json = { workspace = true }

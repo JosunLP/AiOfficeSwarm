@@ -185,7 +185,38 @@ async fn main() -> anyhow::Result<()> {
         .register(Arc::new(AllowAllPolicy::new("demo-allow-all")))
         .await;
 
-    // 4. Register agents.
+    // 4. Demonstrate role loading (if roles/ directory exists).
+    println!("── Loading Roles ───────────────────────────────");
+    let role_registry = swarm_role::RoleRegistry::new();
+
+    let roles_dir = std::path::Path::new("roles");
+    if roles_dir.exists() {
+        match swarm_role::RoleLoader::load_directory(roles_dir, &role_registry) {
+            Ok(summary) => {
+                println!(
+                    "  ✓ Loaded {} / {} roles",
+                    summary.loaded, summary.total_files
+                );
+                for r in &summary.results {
+                    if let Some(ref spec) = r.spec {
+                        println!(
+                            "    • {} ({:?}, {:?})",
+                            spec.name, spec.department, spec.agent_kind
+                        );
+                    }
+                }
+                if summary.errors > 0 {
+                    println!("  ⚠ {} files failed to load", summary.errors);
+                }
+            }
+            Err(e) => println!("  ⚠ Could not load roles: {e}"),
+        }
+    } else {
+        println!("  (roles/ directory not found, skipping)");
+    }
+    println!();
+
+    // 5. Register agents.
     println!("── Registering Agents ──────────────────────────");
     let text_agent = TextProcessingAgent::new("TextProcessor-1");
     let text_agent_id = handle.register_agent(text_agent.descriptor().clone())?;
@@ -200,7 +231,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  ✓ DataAnalyst-1 registered (data-analysis, report-generation)");
     println!();
 
-    // 5. Submit tasks with varying priorities.
+    // 6. Submit tasks with varying priorities.
     println!("── Submitting Tasks ────────────────────────────");
 
     let mut text_spec = TaskSpec::new(
@@ -241,7 +272,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  ✓ Submitted: summarize-meeting-notes (Normal priority)");
     println!();
 
-    // 6. Schedule and execute tasks.
+    // 7. Schedule and execute tasks.
     println!("── Executing Tasks ─────────────────────────────");
 
     let mut text_runner = TaskRunner::new(Box::new(text_agent), handle.clone());
@@ -288,7 +319,7 @@ async fn main() -> anyhow::Result<()> {
     }
     println!();
 
-    // 7. Load and invoke a plugin.
+    // 8. Load and invoke a plugin.
     println!("── Plugin Demonstration ────────────────────────");
     let plugin_host = PluginHost::new();
     let plugin_id = plugin_host
@@ -315,7 +346,7 @@ async fn main() -> anyhow::Result<()> {
     );
     println!();
 
-    // 8. Print summary.
+    // 9. Print summary.
     println!("── Summary ─────────────────────────────────────");
     let snap = metrics.snapshot();
     println!("  Tasks submitted:  {}", snap.tasks_submitted);
