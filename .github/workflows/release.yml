@@ -116,15 +116,28 @@ jobs:
           sha256sum swarm-* > SHA256SUMS
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Release ${{ inputs.release_tag || github.ref_name }}
-          tag_name: ${{ inputs.release_tag || github.ref_name }}
-          target_commitish: ${{ steps.release_commit.outputs.sha }}
-          generate_release_notes: true
-          files: |
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          RELEASE_SHA: ${{ steps.release_commit.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          assets=(
             dist/*
             scripts/install.sh
             scripts/uninstall.sh
             scripts/install.ps1
             scripts/uninstall.ps1
+          )
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --title "Release $RELEASE_TAG" \
+              --target "$RELEASE_SHA" \
+              --verify-tag \
+              --generate-notes
+          fi
