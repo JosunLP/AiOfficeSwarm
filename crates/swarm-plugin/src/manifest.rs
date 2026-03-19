@@ -31,6 +31,20 @@ pub enum PluginCapabilityKind {
     PolicyProvider,
     /// The plugin reacts to external events (webhooks, schedules, etc.).
     TriggerProvider,
+
+    // ── v2 capability kinds ────────────────────────────────────────────
+    /// The plugin adapts an AI model provider (e.g., OpenAI, Anthropic).
+    ProviderAdapter,
+    /// The plugin provides a memory backend (e.g., vector DB, SQL store).
+    MemoryBackend,
+    /// The plugin contributes a learning strategy.
+    LearningStrategy,
+    /// The plugin bundles personality profiles and overlays.
+    PersonalityPack,
+    /// The plugin provides workflow templates.
+    WorkflowProvider,
+    /// The plugin connects an enterprise system (ERP, CRM, etc.).
+    EnterpriseConnector,
 }
 
 /// A named action exposed by a plugin.

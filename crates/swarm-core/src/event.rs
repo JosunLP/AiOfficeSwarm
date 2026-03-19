@@ -71,6 +71,111 @@ pub enum EventKind {
     OrchestratorStarted,
     /// The orchestrator is shutting down.
     OrchestratorShuttingDown,
+
+    // ── Provider events (v2) ────────────────────────────────────────────
+    /// A provider was registered.
+    ProviderRegistered {
+        /// Provider name.
+        name: String,
+    },
+    /// A provider was deregistered.
+    ProviderDeregistered {
+        /// Provider name.
+        name: String,
+    },
+    /// A provider request was made.
+    ProviderRequestCompleted {
+        /// Provider name.
+        provider: String,
+        /// Model used.
+        model: String,
+        /// Prompt tokens consumed.
+        prompt_tokens: u64,
+        /// Completion tokens consumed.
+        completion_tokens: u64,
+    },
+    /// A provider request failed.
+    ProviderRequestFailed {
+        /// Provider name.
+        provider: String,
+        /// Failure reason.
+        reason: String,
+    },
+    /// A provider failover occurred.
+    ProviderFailover {
+        /// Original provider.
+        from_provider: String,
+        /// Fallback provider.
+        to_provider: String,
+    },
+
+    // ── Memory events (v2) ──────────────────────────────────────────────
+    /// A memory entry was stored.
+    MemoryStored {
+        /// Memory scope label.
+        scope: String,
+        /// Memory type label.
+        memory_type: String,
+    },
+    /// A memory entry was retrieved.
+    MemoryRetrieved {
+        /// Memory scope label.
+        scope: String,
+        /// Number of entries returned.
+        count: usize,
+    },
+    /// A memory entry was redacted.
+    MemoryRedacted {
+        /// Memory entry ID.
+        entry_id: String,
+        /// Fields that were redacted.
+        fields: Vec<String>,
+    },
+    /// A retention policy was applied.
+    MemoryRetentionApplied {
+        /// Number of entries removed.
+        entries_removed: u64,
+    },
+
+    // ── Learning events (v2) ────────────────────────────────────────────
+    /// A learning output was produced by a strategy.
+    LearningOutputProduced {
+        /// Learning category.
+        category: String,
+        /// Whether approval is required.
+        requires_approval: bool,
+    },
+    /// A learning output was approved.
+    LearningOutputApproved {
+        /// Output ID.
+        output_id: String,
+    },
+    /// A learning output was rejected.
+    LearningOutputRejected {
+        /// Output ID.
+        output_id: String,
+    },
+    /// A learning output was rolled back.
+    LearningOutputRolledBack {
+        /// Output ID.
+        output_id: String,
+    },
+
+    // ── Personality events (v2) ─────────────────────────────────────────
+    /// A personality profile was applied to an agent.
+    PersonalityApplied {
+        /// Agent ID.
+        agent_id: AgentId,
+        /// Personality name.
+        personality_name: String,
+    },
+    /// A personality overlay was applied for a specific task.
+    PersonalityOverlayApplied {
+        /// Agent ID.
+        agent_id: AgentId,
+        /// Task ID.
+        task_id: TaskId,
+    },
 }
 
 /// A domain event that has been observed in the system.

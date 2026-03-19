@@ -17,6 +17,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use std::collections::HashMap;
+
 use crate::capability::CapabilitySet;
 use crate::error::SwarmResult;
 use crate::identity::AgentId;
@@ -92,6 +94,84 @@ impl AgentStatus {
     }
 }
 
+/// Trust level assigned to an agent. Higher trust allows more autonomous
+/// operations; lower trust enforces stricter policy checks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum TrustLevel {
+    /// No autonomous operation; every action requires approval.
+    Untrusted = 0,
+    /// Limited autonomy; most actions require policy approval.
+    Low = 1,
+    /// Standard autonomy for verified agents.
+    #[default]
+    Standard = 2,
+    /// Elevated trust; may perform sensitive operations.
+    High = 3,
+    /// Full trust; administrative agents only.
+    Full = 4,
+}
+
+/// Provider preferences for an agent — hints for the provider router.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderPreferences {
+    /// Preferred provider name (e.g., `"openai"`, `"anthropic"`).
+    pub preferred_provider: Option<String>,
+    /// Preferred model identifier (e.g., `"gpt-4o"`).
+    pub preferred_model: Option<String>,
+    /// Provider IDs the agent is explicitly allowed to use (empty = all).
+    pub allowlist: Vec<String>,
+    /// Provider IDs the agent must not use.
+    pub blocklist: Vec<String>,
+}
+
+/// Tool permissions controlling which tools an agent may invoke.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToolPermissions {
+    /// Tool names the agent is allowed to invoke (empty = all permitted by policy).
+    pub allowed_tools: Vec<String>,
+    /// Tool names the agent must not invoke.
+    pub denied_tools: Vec<String>,
+    /// Maximum number of tool calls per task execution.
+    pub max_tool_calls_per_task: Option<u32>,
+}
+
+/// Operational constraints that bound an agent's runtime behavior.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OperationalConstraints {
+    /// Maximum number of tasks per time window.
+    pub max_tasks_per_hour: Option<u64>,
+    /// Maximum token budget per task.
+    pub max_tokens_per_task: Option<u64>,
+    /// Maximum total cost (in microdollars) per task.
+    pub max_cost_per_task: Option<u64>,
+    /// Whether the agent may communicate with external systems.
+    pub allow_external_communication: bool,
+    /// Custom constraint key-value pairs.
+    pub custom: HashMap<String, serde_json::Value>,
+}
+
+/// Reference to a learning policy controlling what an agent may learn.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LearningPolicyRef {
+    /// Whether learning is enabled for this agent.
+    pub enabled: bool,
+    /// Whether outputs always require human approval.
+    pub require_approval: bool,
+    /// Allowed learning categories (empty = all allowed by policy).
+    pub allowed_categories: Vec<String>,
+}
+
+/// Reference to a memory access profile controlling what memory an agent may access.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MemoryAccessProfileRef {
+    /// Memory scope labels this agent may read (empty = none).
+    pub readable_scopes: Vec<String>,
+    /// Memory scope labels this agent may write (empty = none).
+    pub writable_scopes: Vec<String>,
+    /// Maximum sensitivity level this agent may access.
+    pub max_sensitivity: Option<String>,
+}
+
 /// A static registration record describing an agent to the orchestrator.
 ///
 /// This is analogous to a Kubernetes `PodSpec` — it is the *desired* configuration
@@ -112,6 +192,23 @@ pub struct AgentDescriptor {
     pub metadata: Metadata,
     /// When this agent descriptor was created.
     pub registered_at: DateTime<Utc>,
+
+    // ── Cognition fields (v2) ──────────────────────────────────────────
+    /// Optional personality profile ID. If set, the personality registry
+    /// is consulted to load the profile at task dispatch time.
+    pub personality_id: Option<String>,
+    /// Memory access profile — defines which scopes the agent may access.
+    pub memory_profile: MemoryAccessProfileRef,
+    /// Learning policy — controls what the agent may learn.
+    pub learning_policy: LearningPolicyRef,
+    /// Trust level for policy evaluation.
+    pub trust_level: TrustLevel,
+    /// Provider preferences for the AI model router.
+    pub provider_preferences: ProviderPreferences,
+    /// Tool invocation permissions.
+    pub tool_permissions: ToolPermissions,
+    /// Operational constraints bounding runtime behavior.
+    pub operational_constraints: OperationalConstraints,
 }
 
 impl AgentDescriptor {
@@ -125,6 +222,14 @@ impl AgentDescriptor {
             resource_limits: ResourceLimits::default(),
             metadata: Metadata::new(),
             registered_at: Utc::now(),
+            // Cognition defaults
+            personality_id: None,
+            memory_profile: MemoryAccessProfileRef::default(),
+            learning_policy: LearningPolicyRef::default(),
+            trust_level: TrustLevel::default(),
+            provider_preferences: ProviderPreferences::default(),
+            tool_permissions: ToolPermissions::default(),
+            operational_constraints: OperationalConstraints::default(),
         }
     }
 }

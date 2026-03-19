@@ -27,7 +27,10 @@ pub mod task;
 pub mod types;
 
 // Re-export the most commonly needed types at the crate root for ergonomic use.
-pub use agent::{Agent, AgentKind, AgentStatus, SupervisionTree};
+pub use agent::{
+    Agent, AgentKind, AgentStatus, LearningPolicyRef, MemoryAccessProfileRef,
+    OperationalConstraints, ProviderPreferences, SupervisionTree, ToolPermissions, TrustLevel,
+};
 pub use capability::{Capability, CapabilitySet};
 pub use error::{SwarmError, SwarmResult};
 pub use event::{Event, EventEnvelope, EventKind};

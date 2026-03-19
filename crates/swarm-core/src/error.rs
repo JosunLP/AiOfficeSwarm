@@ -102,6 +102,65 @@ pub enum SwarmError {
     #[error("invalid configuration value for '{key}': {reason}")]
     ConfigInvalid { key: String, reason: String },
 
+    // ── Provider errors (v2) ──────────────────────────────────────────────
+    /// A provider with the given name was not found.
+    #[error("provider not found: {name}")]
+    ProviderNotFound { name: String },
+
+    /// A provider does not support the requested capability.
+    #[error("provider '{provider}' does not support capability '{capability}'")]
+    ProviderCapabilityUnavailable {
+        provider: String,
+        capability: String,
+    },
+
+    /// A provider request failed.
+    #[error("provider '{provider}' request failed: {reason}")]
+    ProviderRequestFailed { provider: String, reason: String },
+
+    /// No provider could be routed for the request.
+    #[error("no provider available for routing: {reason}")]
+    ProviderRoutingFailed { reason: String },
+
+    /// A compliance boundary was violated during provider routing.
+    #[error("compliance boundary violated: {reason}")]
+    ComplianceBoundaryViolation { reason: String },
+
+    // ── Memory errors (v2) ──────────────────────────────────────────────
+    /// A memory operation was denied by access control.
+    #[error("memory access denied: {reason}")]
+    MemoryAccessDenied { reason: String },
+
+    /// A memory entry was not found.
+    #[error("memory entry not found: {id}")]
+    MemoryEntryNotFound { id: String },
+
+    /// A memory backend operation failed.
+    #[error("memory backend error: {reason}")]
+    MemoryBackendError { reason: String },
+
+    // ── Learning errors (v2) ────────────────────────────────────────────
+    /// Learning is disabled for the given scope.
+    #[error("learning disabled for scope '{scope}'")]
+    LearningDisabled { scope: String },
+
+    /// A learning output requires approval before it can be applied.
+    #[error("learning output {id} requires approval")]
+    LearningApprovalRequired { id: String },
+
+    /// A learning rollback failed.
+    #[error("learning rollback failed for output {id}: {reason}")]
+    LearningRollbackFailed { id: String, reason: String },
+
+    // ── Personality errors (v2) ─────────────────────────────────────────
+    /// A personality profile was not found.
+    #[error("personality not found: {id}")]
+    PersonalityNotFound { id: String },
+
+    /// A personality profile violates a boundary constraint.
+    #[error("personality boundary violation: {reason}")]
+    PersonalityBoundaryViolation { reason: String },
+
     // ── Runtime / infrastructure errors ───────────────────────────────────
     /// A channel send/receive operation failed (typically means a component
     /// has shut down unexpectedly).

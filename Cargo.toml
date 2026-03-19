@@ -8,6 +8,10 @@ members = [
     "crates/swarm-telemetry",
     "crates/swarm-runtime",
     "crates/swarm-cli",
+    "crates/swarm-provider",
+    "crates/swarm-personality",
+    "crates/swarm-memory",
+    "crates/swarm-learning",
     "plugins/example-integration",
     "examples/basic_swarm",
 ]
@@ -69,6 +73,10 @@ swarm-plugin = { path = "crates/swarm-plugin" }
 swarm-config = { path = "crates/swarm-config" }
 swarm-telemetry = { path = "crates/swarm-telemetry" }
 swarm-runtime = { path = "crates/swarm-runtime" }
+swarm-provider = { path = "crates/swarm-provider" }
+swarm-personality = { path = "crates/swarm-personality" }
+swarm-memory = { path = "crates/swarm-memory" }
+swarm-learning = { path = "crates/swarm-learning" }
 
 [profile.release]
 lto = true
