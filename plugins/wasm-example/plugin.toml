@@ -9,7 +9,7 @@
 name             = "Echo WASM Plugin"
 
 # Semantic version of this plugin.
-version          = "0.1.0"
+version          = "0.1.1"
 
 # Author or vendor identifier.
 author           = "AiOfficeSwarm Contributors"
@@ -18,7 +18,7 @@ author           = "AiOfficeSwarm Contributors"
 description      = "A minimal echo plugin compiled to WebAssembly. Returns its input unchanged."
 
 # Minimum host framework version required (SemVer).
-min_host_version = "0.1.0"
+min_host_version = "0.1.1"
 
 # Path to the precompiled WASM binary, relative to this manifest file.
 wasm_file = "echo-plugin.wasm"

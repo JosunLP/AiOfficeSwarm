@@ -56,7 +56,7 @@ cargo test --workspace
 
 ## Installation
 
-The planned first public release tag is `v0.1.0`.
+The latest release tag is `v0.1.1`.
 The examples below show both **latest** and a **pinned version**. Replace
 `vX.Y.Z` with a published release tag when installing or updating a specific
 version.
@@ -145,7 +145,7 @@ swarm update --version vX.Y.Z
 ### Release notes
 
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
-- Planned first release tag: `v0.1.0`
+- Latest release tag: `v0.1.1`
 
 ---
 
@@ -299,7 +299,7 @@ name             = "My WASM Plugin"
 version          = "1.0.0"
 author           = "Acme Corp"
 description      = "A plugin compiled to WebAssembly"
-min_host_version = "0.1.0"
+min_host_version = "0.1.1"
 wasm_file        = "my-plugin.wasm"
 capabilities     = ["ActionProvider"]
 

@@ -2,7 +2,7 @@
 
 > **Crate:** `swarm-role`
 > **Status:** Active
-> **Version:** 0.1.0
+> **Version:** 0.1.1
 > **Last updated:** 2025-07-15
 
 ## Overview
@@ -17,7 +17,7 @@ The role subsystem transforms the organizational role definitions in `roles/` fr
 | **Specification**   | `RoleSpec`             | Normalized, validated, typed role definition       |
 | **Runtime profile** | `EffectiveRoleProfile` | Policy-resolved, tenant-overridden runtime state   |
 
-```
+```text
 roles/00_GOVERNANCE/CEO_Agent.md
         │
         ▼
@@ -101,6 +101,7 @@ The runtime-resolved version of a `RoleSpec`, after applying tenant overrides. U
 ### `DepartmentCategory`
 
 Enum matching the `roles/` directory structure:
+
 - `Governance` (00_GOVERNANCE)
 - `ProductTech` (01_PRODUCT_TECH)
 - `GrowthRevenue` (02_GROWTH_REVENUE)
@@ -199,7 +200,7 @@ let tools = binding.to_tool_permissions();
 
 The `RoleHierarchy` encodes all 21 supervision edges from `ORGANIGRAM.md`:
 
-```
+```text
 CEO
 ├── COO
 │   ├── CTO/Engineering
@@ -227,6 +228,7 @@ CEO
 ## Testing
 
 The crate has 39 unit tests covering:
+
 - Model types and deterministic ID generation
 - Markdown parsing (happy path and edge cases)
 - Normalization heuristics
@@ -240,6 +242,7 @@ The crate has 39 unit tests covering:
 - Learning bridge
 
 Run tests:
-```
+
+```bash
 cargo test -p swarm-role
 ```

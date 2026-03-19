@@ -26,11 +26,11 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
             binary: swarm
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             archive: tar.gz
             binary: swarm
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             archive: tar.gz
             binary: swarm
@@ -40,7 +40,7 @@ jobs:
             binary: swarm.exe
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.release_tag || github.ref_name }}
 
@@ -81,7 +81,7 @@ jobs:
           Compress-Archive -Path "package/*" -DestinationPath "dist/swarm-${{ matrix.target }}.zip" -Force
 
       - name: Upload packaged asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: swarm-${{ matrix.target }}
           path: dist/*
@@ -94,7 +94,7 @@ jobs:
       contents: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.release_tag || github.ref_name }}
 
@@ -104,7 +104,7 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Download packaged assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: swarm-*
