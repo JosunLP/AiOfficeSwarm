@@ -95,20 +95,11 @@ pub enum LogFormat {
 }
 
 /// Plugin subsystem configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PluginsConfig {
     /// Directory to scan for plugin definitions.
     pub plugin_dir: Option<String>,
     /// Whether to auto-load plugins found in `plugin_dir` on startup.
     pub auto_load: bool,
-}
-
-impl Default for PluginsConfig {
-    fn default() -> Self {
-        Self {
-            plugin_dir: None,
-            auto_load: false,
-        }
-    }
 }

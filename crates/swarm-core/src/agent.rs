@@ -116,11 +116,7 @@ pub struct AgentDescriptor {
 
 impl AgentDescriptor {
     /// Create a new descriptor with sensible defaults.
-    pub fn new(
-        name: impl Into<String>,
-        kind: AgentKind,
-        capabilities: CapabilitySet,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, kind: AgentKind, capabilities: CapabilitySet) -> Self {
         Self {
             id: AgentId::new(),
             name: name.into(),
@@ -245,7 +241,10 @@ mod tests {
     #[test]
     fn agent_status_availability() {
         assert!(AgentStatus::Ready.is_available());
-        assert!(!AgentStatus::Busy { current_task: crate::identity::TaskId::new() }.is_available());
+        assert!(!AgentStatus::Busy {
+            current_task: crate::identity::TaskId::new()
+        }
+        .is_available());
         assert!(!AgentStatus::Stopped.is_available());
     }
 

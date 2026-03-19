@@ -133,8 +133,7 @@ mod tests {
     #[test]
     fn event_envelope_with_correlation() {
         let corr = Uuid::new_v4();
-        let ev = EventEnvelope::new(EventKind::OrchestratorStarted)
-            .with_correlation(corr);
+        let ev = EventEnvelope::new(EventKind::OrchestratorStarted).with_correlation(corr);
         assert_eq!(ev.correlation_id, Some(corr));
     }
 }

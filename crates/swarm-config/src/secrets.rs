@@ -53,10 +53,7 @@ impl EnvSecretsProvider {
     }
 
     fn env_var_name(&self, name: &str) -> String {
-        let normalized = name
-            .to_uppercase()
-            .replace('.', "_")
-            .replace('-', "_");
+        let normalized = name.to_uppercase().replace(['.', '-'], "_");
         match &self.prefix {
             Some(p) => format!("{}_{}", p.to_uppercase(), normalized),
             None => normalized,

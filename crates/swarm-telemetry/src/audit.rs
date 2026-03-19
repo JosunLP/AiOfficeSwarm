@@ -136,7 +136,12 @@ mod tests {
     fn record_and_retrieve() {
         let logger = AuditLogger::new();
         logger.allowed("task.submit", "user:alice", "task-queue");
-        logger.denied("agent.delete", "user:bob", "agent:xyz", "insufficient permissions");
+        logger.denied(
+            "agent.delete",
+            "user:bob",
+            "agent:xyz",
+            "insufficient permissions",
+        );
 
         let entries = logger.entries();
         assert_eq!(entries.len(), 2);

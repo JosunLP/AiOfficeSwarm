@@ -57,8 +57,8 @@
 //! - `n < 0`  → error; `(-n)` bytes of a UTF-8 error message were written to
 //!   `result_ptr`. If `n == -1` the error message is empty.
 
-use std::path::Path;
 use std::ops::Range;
+use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -67,11 +67,7 @@ use wasmtime::{Engine, Instance, Memory, Module, Store, TypedFunc};
 
 use swarm_core::error::{SwarmError, SwarmResult};
 
-use crate::{
-    manifest::PluginManifest,
-    wasm_manifest::WasmManifestFile,
-    Plugin,
-};
+use crate::{manifest::PluginManifest, wasm_manifest::WasmManifestFile, Plugin};
 
 // ─── Internal runtime state ───────────────────────────────────────────────────
 
@@ -169,13 +165,12 @@ impl WasmPlugin {
             name: plugin_name.into(),
             reason: format!("input too large for WASM ABI: {} bytes", data.len()),
         })?;
-        let ptr = rt
-            .fn_alloc
-            .call(&mut rt.store, len)
-            .map_err(|e| SwarmError::PluginOperationFailed {
+        let ptr = rt.fn_alloc.call(&mut rt.store, len).map_err(|e| {
+            SwarmError::PluginOperationFailed {
                 name: plugin_name.into(),
                 reason: format!("swarm_alloc failed: {e}"),
-            })?;
+            }
+        })?;
 
         let range = Self::checked_memory_range(
             plugin_name,
@@ -191,12 +186,12 @@ impl WasmPlugin {
 
     /// Free previously allocated WASM memory.
     fn dealloc(rt: &mut WasmRuntime, plugin_name: &str, ptr: i32, len: i32) -> SwarmResult<()> {
-        rt.fn_dealloc
-            .call(&mut rt.store, (ptr, len))
-            .map_err(|e| SwarmError::PluginOperationFailed {
+        rt.fn_dealloc.call(&mut rt.store, (ptr, len)).map_err(|e| {
+            SwarmError::PluginOperationFailed {
                 name: plugin_name.into(),
                 reason: format!("swarm_dealloc failed: {e}"),
-            })
+            }
+        })
     }
 
     /// Allocate a result buffer in WASM memory of size `RESULT_BUFFER_CAPACITY`.
@@ -246,10 +241,12 @@ impl WasmPlugin {
             name: plugin_name.into(),
             reason: format!("{context}: negative pointer {ptr}"),
         })?;
-        let end = start.checked_add(len).ok_or_else(|| SwarmError::PluginOperationFailed {
-            name: plugin_name.into(),
-            reason: format!("{context}: pointer {ptr} with length {len} overflows"),
-        })?;
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| SwarmError::PluginOperationFailed {
+                name: plugin_name.into(),
+                reason: format!("{context}: pointer {ptr} with length {len} overflows"),
+            })?;
 
         if end > memory_len {
             return Err(SwarmError::PluginOperationFailed {
@@ -274,23 +271,42 @@ impl Plugin for WasmPlugin {
         let mut store = Store::new(&self.engine, ());
 
         // Instantiate the module with no imports (pure WASM).
-        let instance =
-            Instance::new(&mut store, &self.module, &[]).map_err(|e| {
-                SwarmError::PluginInitFailed {
-                    name: self.manifest.name.clone(),
-                    reason: format!("WASM instantiation failed: {e}"),
-                }
-            })?;
+        let instance = Instance::new(&mut store, &self.module, &[]).map_err(|e| {
+            SwarmError::PluginInitFailed {
+                name: self.manifest.name.clone(),
+                reason: format!("WASM instantiation failed: {e}"),
+            }
+        })?;
 
         // Resolve required exports.
         let memory = resolve_memory(&instance, &mut store, &self.manifest.name)?;
-        let fn_alloc = resolve_fn::<i32, i32>(&instance, &mut store, "swarm_alloc", &self.manifest.name)?;
-        let fn_dealloc = resolve_fn::<(i32, i32), ()>(&instance, &mut store, "swarm_dealloc", &self.manifest.name)?;
-        let fn_on_load = resolve_fn::<(), i32>(&instance, &mut store, "swarm_on_load", &self.manifest.name)?;
-        let fn_on_unload = resolve_fn::<(), i32>(&instance, &mut store, "swarm_on_unload", &self.manifest.name)?;
-        let fn_health_check = resolve_fn::<(), i32>(&instance, &mut store, "swarm_health_check", &self.manifest.name)?;
+        let fn_alloc =
+            resolve_fn::<i32, i32>(&instance, &mut store, "swarm_alloc", &self.manifest.name)?;
+        let fn_dealloc = resolve_fn::<(i32, i32), ()>(
+            &instance,
+            &mut store,
+            "swarm_dealloc",
+            &self.manifest.name,
+        )?;
+        let fn_on_load =
+            resolve_fn::<(), i32>(&instance, &mut store, "swarm_on_load", &self.manifest.name)?;
+        let fn_on_unload = resolve_fn::<(), i32>(
+            &instance,
+            &mut store,
+            "swarm_on_unload",
+            &self.manifest.name,
+        )?;
+        let fn_health_check = resolve_fn::<(), i32>(
+            &instance,
+            &mut store,
+            "swarm_health_check",
+            &self.manifest.name,
+        )?;
         let fn_invoke = resolve_fn::<(i32, i32, i32, i32, i32, i32), i32>(
-            &instance, &mut store, "swarm_invoke", &self.manifest.name,
+            &instance,
+            &mut store,
+            "swarm_invoke",
+            &self.manifest.name,
         )?;
 
         let mut rt = WasmRuntime {
@@ -305,13 +321,13 @@ impl Plugin for WasmPlugin {
         };
 
         // Call `swarm_on_load` inside the WASM module.
-        let rc = rt
-            .fn_on_load
-            .call(&mut rt.store, ())
-            .map_err(|e| SwarmError::PluginInitFailed {
-                name: self.manifest.name.clone(),
-                reason: format!("swarm_on_load trap: {e}"),
-            })?;
+        let rc =
+            rt.fn_on_load
+                .call(&mut rt.store, ())
+                .map_err(|e| SwarmError::PluginInitFailed {
+                    name: self.manifest.name.clone(),
+                    reason: format!("swarm_on_load trap: {e}"),
+                })?;
 
         if rc != 0 {
             return Err(SwarmError::PluginInitFailed {
@@ -331,13 +347,12 @@ impl Plugin for WasmPlugin {
             None => return Ok(()), // nothing to do if never loaded
         };
 
-        let rc = rt
-            .fn_on_unload
-            .call(&mut rt.store, ())
-            .map_err(|e| SwarmError::PluginOperationFailed {
+        let rc = rt.fn_on_unload.call(&mut rt.store, ()).map_err(|e| {
+            SwarmError::PluginOperationFailed {
                 name: self.manifest.name.clone(),
                 reason: format!("swarm_on_unload trap: {e}"),
-            })?;
+            }
+        })?;
 
         if rc != 0 {
             tracing::warn!(
@@ -357,10 +372,12 @@ impl Plugin for WasmPlugin {
         params: serde_json::Value,
     ) -> SwarmResult<serde_json::Value> {
         let mut guard = self.runtime.lock().await;
-        let rt = guard.as_mut().ok_or_else(|| SwarmError::PluginOperationFailed {
-            name: self.manifest.name.clone(),
-            reason: "WASM plugin is not loaded".into(),
-        })?;
+        let rt = guard
+            .as_mut()
+            .ok_or_else(|| SwarmError::PluginOperationFailed {
+                name: self.manifest.name.clone(),
+                reason: "WASM plugin is not loaded".into(),
+            })?;
 
         let params_json = params.to_string();
         let plugin_name = self.manifest.name.clone();
@@ -368,7 +385,8 @@ impl Plugin for WasmPlugin {
 
         let result = (|| -> SwarmResult<serde_json::Value> {
             // Write action name and params into WASM memory.
-            let (action_ptr, action_len) = Self::alloc_and_write(rt, &plugin_name, action.as_bytes())?;
+            let (action_ptr, action_len) =
+                Self::alloc_and_write(rt, &plugin_name, action.as_bytes())?;
             allocations.push(action_ptr, action_len);
 
             let (params_ptr, params_len) =
@@ -459,18 +477,19 @@ impl Plugin for WasmPlugin {
 
     async fn health_check(&self) -> SwarmResult<()> {
         let mut guard = self.runtime.lock().await;
-        let rt = guard.as_mut().ok_or_else(|| SwarmError::PluginOperationFailed {
-            name: self.manifest.name.clone(),
-            reason: "WASM plugin is not loaded".into(),
-        })?;
+        let rt = guard
+            .as_mut()
+            .ok_or_else(|| SwarmError::PluginOperationFailed {
+                name: self.manifest.name.clone(),
+                reason: "WASM plugin is not loaded".into(),
+            })?;
 
-        let rc = rt
-            .fn_health_check
-            .call(&mut rt.store, ())
-            .map_err(|e| SwarmError::PluginOperationFailed {
+        let rc = rt.fn_health_check.call(&mut rt.store, ()).map_err(|e| {
+            SwarmError::PluginOperationFailed {
                 name: self.manifest.name.clone(),
                 reason: format!("swarm_health_check trap: {e}"),
-            })?;
+            }
+        })?;
 
         if rc == 0 {
             Ok(())
@@ -747,7 +766,12 @@ mod tests {
     }
 
     fn test_manifest() -> PluginManifest {
-        PluginManifest::new("test-wasm", "0.1.0", "tests", "WASM integration test plugin")
+        PluginManifest::new(
+            "test-wasm",
+            "0.1.0",
+            "tests",
+            "WASM integration test plugin",
+        )
     }
 
     // ── Loader ──────────────────────────────────────────────────────────────
@@ -756,7 +780,11 @@ mod tests {
     fn loader_compiles_valid_wasm() {
         let bytes = echo_wasm_bytes();
         let plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest());
-        assert!(plugin.is_ok(), "valid WASM should compile: {:?}", plugin.err());
+        assert!(
+            plugin.is_ok(),
+            "valid WASM should compile: {:?}",
+            plugin.err()
+        );
     }
 
     #[test]
@@ -770,25 +798,28 @@ mod tests {
     #[tokio::test]
     async fn on_load_succeeds() {
         let bytes = echo_wasm_bytes();
-        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let mut plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
         plugin.on_load().await.expect("on_load should succeed");
     }
 
     #[tokio::test]
     async fn health_check_passes_after_load() {
         let bytes = echo_wasm_bytes();
-        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let mut plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
         plugin.on_load().await.expect("on_load");
-        plugin.health_check().await.expect("health_check should pass");
+        plugin
+            .health_check()
+            .await
+            .expect("health_check should pass");
     }
 
     #[tokio::test]
     async fn health_check_fails_before_load() {
         let bytes = echo_wasm_bytes();
-        let plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
         // Plugin not loaded yet → should return an error.
         assert!(plugin.health_check().await.is_err());
     }
@@ -796,8 +827,8 @@ mod tests {
     #[tokio::test]
     async fn invoke_echo_returns_params_json() {
         let bytes = echo_wasm_bytes();
-        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let mut plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
         plugin.on_load().await.expect("on_load");
 
         let params = serde_json::json!({"message": "hello from host", "value": 42});
@@ -812,8 +843,8 @@ mod tests {
     #[tokio::test]
     async fn invoke_fails_before_load() {
         let bytes = echo_wasm_bytes();
-        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let mut plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
         let result = plugin.invoke("echo", serde_json::json!({})).await;
         assert!(result.is_err(), "invoke before on_load should fail");
     }
@@ -821,8 +852,8 @@ mod tests {
     #[tokio::test]
     async fn invoke_error_without_message_uses_unspecified_error_text() {
         let bytes = invoke_error_no_message_wasm_bytes();
-        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let mut plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
         plugin.on_load().await.expect("on_load");
 
         let err = plugin
@@ -830,7 +861,8 @@ mod tests {
             .await
             .expect_err("invoke should fail");
         assert!(
-            err.to_string().contains("WASM plugin returned an unspecified error"),
+            err.to_string()
+                .contains("WASM plugin returned an unspecified error"),
             "unexpected error: {err}"
         );
     }
@@ -838,8 +870,8 @@ mod tests {
     #[tokio::test]
     async fn invoke_rejects_error_length_exceeding_result_buffer_capacity() {
         let bytes = invoke_error_length_too_large_wasm_bytes();
-        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let mut plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
         plugin.on_load().await.expect("on_load");
 
         let err = plugin
@@ -855,8 +887,8 @@ mod tests {
     #[tokio::test]
     async fn invoke_rejects_out_of_bounds_allocator_pointer() {
         let bytes = invalid_alloc_pointer_wasm_bytes();
-        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let mut plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
         plugin.on_load().await.expect("on_load");
 
         let err = plugin
@@ -872,8 +904,8 @@ mod tests {
     #[tokio::test]
     async fn on_unload_after_load_succeeds() {
         let bytes = echo_wasm_bytes();
-        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let mut plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
         plugin.on_load().await.expect("on_load");
         plugin.on_unload().await.expect("on_unload should succeed");
     }
@@ -882,16 +914,19 @@ mod tests {
     async fn on_unload_before_load_is_noop() {
         // Calling on_unload before on_load should not panic.
         let bytes = echo_wasm_bytes();
-        let mut plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
-        plugin.on_unload().await.expect("on_unload before on_load is a no-op");
+        let mut plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
+        plugin
+            .on_unload()
+            .await
+            .expect("on_unload before on_load is a no-op");
     }
 
     #[tokio::test]
     async fn manifest_is_accessible() {
         let bytes = echo_wasm_bytes();
-        let plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
         assert_eq!(plugin.manifest().name, "test-wasm");
         assert_eq!(plugin.manifest().version, "0.1.0");
     }
@@ -903,8 +938,8 @@ mod tests {
         use crate::PluginHost;
 
         let bytes = echo_wasm_bytes();
-        let plugin = WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest())
-            .expect("compile");
+        let plugin =
+            WasmPluginLoader::from_bytes_and_manifest(&bytes, test_manifest()).expect("compile");
 
         let host = PluginHost::new();
         let id = host.load(Box::new(plugin)).await.expect("host.load");

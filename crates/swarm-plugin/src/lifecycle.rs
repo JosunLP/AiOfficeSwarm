@@ -1,7 +1,7 @@
 //! Plugin lifecycle state machine.
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// The current state of a plugin within the host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,16 +49,22 @@ impl PluginState {
 #[derive(Debug, Clone)]
 pub enum PluginLifecycleEvent {
     /// Plugin started loading.
-    Loading { plugin_id: swarm_core::identity::PluginId },
+    Loading {
+        plugin_id: swarm_core::identity::PluginId,
+    },
     /// Plugin loaded successfully and is now active.
-    Activated { plugin_id: swarm_core::identity::PluginId },
+    Activated {
+        plugin_id: swarm_core::identity::PluginId,
+    },
     /// Plugin failed to load or encountered a runtime error.
     Failed {
         plugin_id: swarm_core::identity::PluginId,
         reason: String,
     },
     /// Plugin was cleanly unloaded.
-    Unloaded { plugin_id: swarm_core::identity::PluginId },
+    Unloaded {
+        plugin_id: swarm_core::identity::PluginId,
+    },
 }
 
 #[cfg(test)]
@@ -68,7 +74,14 @@ mod tests {
     #[test]
     fn plugin_state_labels() {
         assert_eq!(PluginState::Active.label(), "active");
-        assert_eq!(PluginState::Failed { reason: "err".into(), failed_at: Utc::now() }.label(), "failed");
+        assert_eq!(
+            PluginState::Failed {
+                reason: "err".into(),
+                failed_at: Utc::now()
+            }
+            .label(),
+            "failed"
+        );
     }
 
     #[test]

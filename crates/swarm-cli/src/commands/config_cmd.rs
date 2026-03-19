@@ -21,14 +21,35 @@ pub async fn run(args: ConfigArgs, config: &SwarmConfig) -> anyhow::Result<()> {
             println!("Effective configuration:");
             println!("  instance_name:                {}", config.instance_name);
             println!("  orchestrator:");
-            println!("    event_channel_capacity:     {}", config.orchestrator.event_channel_capacity);
-            println!("    max_dispatch_per_tick:      {}", config.orchestrator.max_dispatch_per_tick);
-            println!("    default_task_timeout_secs:  {}", config.orchestrator.default_task_timeout_secs);
-            println!("    max_concurrent_tasks:       {}", config.orchestrator.max_concurrent_tasks);
+            println!(
+                "    event_channel_capacity:     {}",
+                config.orchestrator.event_channel_capacity
+            );
+            println!(
+                "    max_dispatch_per_tick:      {}",
+                config.orchestrator.max_dispatch_per_tick
+            );
+            println!(
+                "    default_task_timeout_secs:  {}",
+                config.orchestrator.default_task_timeout_secs
+            );
+            println!(
+                "    max_concurrent_tasks:       {}",
+                config.orchestrator.max_concurrent_tasks
+            );
             println!("  telemetry:");
-            println!("    log_level:                  {}", config.telemetry.log_level);
-            println!("    log_format:                 {:?}", config.telemetry.log_format);
-            println!("    otlp_enabled:               {}", config.telemetry.otlp_enabled);
+            println!(
+                "    log_level:                  {}",
+                config.telemetry.log_level
+            );
+            println!(
+                "    log_format:                 {:?}",
+                config.telemetry.log_format
+            );
+            println!(
+                "    otlp_enabled:               {}",
+                config.telemetry.otlp_enabled
+            );
         }
     }
     Ok(())

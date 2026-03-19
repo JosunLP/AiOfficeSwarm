@@ -171,12 +171,30 @@ mod tests {
 
     #[test]
     fn wasm_permission_as_str() {
-        assert_eq!(WasmPermission::Network("api.test.com:443".into()).compact_string(), "network:api.test.com:443");
-        assert_eq!(WasmPermission::EnvVar("MY_KEY".into()).compact_string(), "env_var:MY_KEY");
-        assert_eq!(WasmPermission::FileRead("/etc/ssl".into()).compact_string(), "file_read:/etc/ssl");
-        assert_eq!(WasmPermission::FileWrite("/tmp".into()).compact_string(), "file_write:/tmp");
-        assert_eq!(WasmPermission::Custom("special".into()).compact_string(), "custom:special");
-        assert_eq!(WasmPermission::Custom("special".into()).to_string(), "custom:special");
+        assert_eq!(
+            WasmPermission::Network("api.test.com:443".into()).compact_string(),
+            "network:api.test.com:443"
+        );
+        assert_eq!(
+            WasmPermission::EnvVar("MY_KEY".into()).compact_string(),
+            "env_var:MY_KEY"
+        );
+        assert_eq!(
+            WasmPermission::FileRead("/etc/ssl".into()).compact_string(),
+            "file_read:/etc/ssl"
+        );
+        assert_eq!(
+            WasmPermission::FileWrite("/tmp".into()).compact_string(),
+            "file_write:/tmp"
+        );
+        assert_eq!(
+            WasmPermission::Custom("special".into()).compact_string(),
+            "custom:special"
+        );
+        assert_eq!(
+            WasmPermission::Custom("special".into()).to_string(),
+            "custom:special"
+        );
     }
 
     #[test]

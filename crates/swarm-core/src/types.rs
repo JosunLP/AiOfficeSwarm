@@ -141,8 +141,8 @@ impl RetryPolicy {
                     return self.max_delay;
                 }
 
-                let capped_secs = (self.initial_delay.as_secs_f64() * factor)
-                    .min(self.max_delay.as_secs_f64());
+                let capped_secs =
+                    (self.initial_delay.as_secs_f64() * factor).min(self.max_delay.as_secs_f64());
 
                 if !capped_secs.is_finite() {
                     return self.max_delay;

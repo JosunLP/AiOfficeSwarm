@@ -54,11 +54,23 @@ macro_rules! define_id {
     };
 }
 
-define_id!(AgentId, "A unique identifier for an [`Agent`](crate::agent::Agent) instance.");
-define_id!(TaskId, "A unique identifier for a [`Task`](crate::task::Task) instance.");
-define_id!(PolicyId, "A unique identifier for a [`Policy`](crate::policy::Policy).");
+define_id!(
+    AgentId,
+    "A unique identifier for an [`Agent`](crate::agent::Agent) instance."
+);
+define_id!(
+    TaskId,
+    "A unique identifier for a [`Task`](crate::task::Task) instance."
+);
+define_id!(
+    PolicyId,
+    "A unique identifier for a [`Policy`](crate::policy::Policy)."
+);
 define_id!(PluginId, "A unique identifier for a registered plugin.");
-define_id!(TenantId, "A tenant identifier for logical isolation in a multi-tenant deployment.");
+define_id!(
+    TenantId,
+    "A tenant identifier for logical isolation in a multi-tenant deployment."
+);
 
 #[cfg(test)]
 mod tests {

@@ -4,7 +4,7 @@
 //! and what their current status is. It is analogous to the Kubernetes API
 //! server's object store for Pod resources.
 
-use dashmap::{DashMap, mapref::entry::Entry};
+use dashmap::{mapref::entry::Entry, DashMap};
 use std::sync::Arc;
 
 use swarm_core::{
@@ -89,7 +89,7 @@ impl AgentRegistry {
         self.agents
             .remove(id)
             .map(|(_, record)| record)
-            .ok_or_else(|| SwarmError::AgentNotFound { id: *id })
+            .ok_or(SwarmError::AgentNotFound { id: *id })
     }
 
     /// Update an agent's status. Emits a tracing event.
@@ -97,7 +97,7 @@ impl AgentRegistry {
         let mut record = self
             .agents
             .get_mut(id)
-            .ok_or_else(|| SwarmError::AgentNotFound { id: *id })?;
+            .ok_or(SwarmError::AgentNotFound { id: *id })?;
         let prev_label = record.status.label().to_owned();
         let new_label = status.label().to_owned();
         record.update_status(status);
@@ -115,7 +115,7 @@ impl AgentRegistry {
         self.agents
             .get(id)
             .map(|r| r.clone())
-            .ok_or_else(|| SwarmError::AgentNotFound { id: *id })
+            .ok_or(SwarmError::AgentNotFound { id: *id })
     }
 
     /// Return IDs of all agents currently in the `Ready` state.

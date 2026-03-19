@@ -6,8 +6,8 @@
 //! It submits several tasks, runs them through the runtime, and prints a
 //! summary showing the framework in action.
 
-use clap::Args;
 use async_trait::async_trait;
+use clap::Args;
 
 use swarm_config::SwarmConfig;
 use swarm_core::{
@@ -84,7 +84,8 @@ pub async fn run(args: DemoArgs, config: &SwarmConfig) -> anyhow::Result<()> {
     let mut capabilities = CapabilitySet::new();
     capabilities.add(Capability::new("text-processing"));
 
-    let worker1_desc = AgentDescriptor::new("Worker-Alpha", AgentKind::Worker, capabilities.clone());
+    let worker1_desc =
+        AgentDescriptor::new("Worker-Alpha", AgentKind::Worker, capabilities.clone());
     let worker2_desc = AgentDescriptor::new("Worker-Beta", AgentKind::Worker, capabilities.clone());
 
     let w1_id = handle.register_agent(worker1_desc.clone())?;
@@ -114,11 +115,15 @@ pub async fn run(args: DemoArgs, config: &SwarmConfig) -> anyhow::Result<()> {
 
     // Create runners for each worker.
     let mut runner1 = TaskRunner::new(
-        Box::new(EchoWorker { descriptor: worker1_desc }),
+        Box::new(EchoWorker {
+            descriptor: worker1_desc,
+        }),
         handle.clone(),
     );
     let mut runner2 = TaskRunner::new(
-        Box::new(EchoWorker { descriptor: worker2_desc }),
+        Box::new(EchoWorker {
+            descriptor: worker2_desc,
+        }),
         handle.clone(),
     );
 
@@ -148,7 +153,11 @@ pub async fn run(args: DemoArgs, config: &SwarmConfig) -> anyhow::Result<()> {
                 Ok(output) => {
                     completed += 1;
                     metrics.inc_tasks_completed();
-                    println!("  ✓ task-{} completed: {}", completed + failed, output["echo"]["message"]);
+                    println!(
+                        "  ✓ task-{} completed: {}",
+                        completed + failed,
+                        output["echo"]["message"]
+                    );
                 }
                 Err(e) => {
                     failed += 1;

@@ -12,6 +12,7 @@
 //!   plugin   Manage plugins (list, load, unload, invoke)
 //!   config   Show effective configuration
 //!   metrics  Show runtime metrics
+//!   update   Download and install the latest released CLI binary
 //!   demo     Run a built-in demonstration swarm
 //! ```
 
@@ -22,7 +23,7 @@ use clap::{Parser, Subcommand};
 
 mod commands;
 
-use commands::{agent, config_cmd, demo, metrics_cmd, plugin, task};
+use commands::{agent, config_cmd, demo, metrics_cmd, plugin, task, update};
 
 /// AiOfficeSwarm — enterprise AI agent orchestration framework.
 #[derive(Parser)]
@@ -59,6 +60,8 @@ enum Commands {
     Config(config_cmd::ConfigArgs),
     /// Show runtime metrics.
     Metrics(metrics_cmd::MetricsArgs),
+    /// Download and install the latest released CLI binary.
+    Update(update::UpdateArgs),
     /// Run the built-in demonstration swarm.
     Demo(demo::DemoArgs),
 }
@@ -69,11 +72,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Load configuration.
     let mut config = match &cli.config {
-        Some(path) => swarm_config::ConfigLoader::from_file(path)
-            .unwrap_or_else(|e| {
-                eprintln!("Warning: could not load config file '{}': {}", path, e);
-                swarm_config::ConfigLoader::defaults()
-            }),
+        Some(path) => swarm_config::ConfigLoader::from_file(path).unwrap_or_else(|e| {
+            eprintln!("Warning: could not load config file '{}': {}", path, e);
+            swarm_config::ConfigLoader::defaults()
+        }),
         None => swarm_config::ConfigLoader::defaults(),
     };
 
@@ -94,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Plugin(args) => plugin::run(args, &config).await,
         Commands::Config(args) => config_cmd::run(args, &config).await,
         Commands::Metrics(args) => metrics_cmd::run(args, &config).await,
+        Commands::Update(args) => update::run(args, &config).await,
         Commands::Demo(args) => demo::run(args, &config).await,
     }
 }

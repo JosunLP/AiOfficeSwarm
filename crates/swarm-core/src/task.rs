@@ -63,22 +63,17 @@ impl TaskSpec {
 ///
 /// Higher-priority tasks are scheduled before lower-priority tasks when the
 /// scheduler has a choice between candidates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum TaskPriority {
     /// Lowest priority — background or maintenance tasks.
     Low = 0,
     /// Default priority for most tasks.
+    #[default]
     Normal = 1,
     /// High-priority tasks that should be scheduled ahead of `Normal`.
     High = 2,
     /// Critical tasks — must be executed as soon as possible.
     Critical = 3,
-}
-
-impl Default for TaskPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// The current lifecycle state of a task.
@@ -195,7 +190,9 @@ impl Task {
         if !matches!(self.status, TaskStatus::Pending) {
             return Err(&self.status);
         }
-        self.status = TaskStatus::Scheduled { assigned_to: agent_id };
+        self.status = TaskStatus::Scheduled {
+            assigned_to: agent_id,
+        };
         self.updated_at = Utc::now();
         Ok(())
     }
@@ -275,7 +272,8 @@ mod tests {
         task.schedule(agent).expect("schedule should succeed");
         assert!(matches!(task.status, TaskStatus::Scheduled { .. }));
 
-        task.start_running(agent).expect("start_running should succeed");
+        task.start_running(agent)
+            .expect("start_running should succeed");
         assert!(matches!(task.status, TaskStatus::Running { .. }));
         assert_eq!(task.attempt_count, 1);
 

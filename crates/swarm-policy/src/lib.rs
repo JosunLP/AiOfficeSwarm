@@ -20,10 +20,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::all)]
 
+pub mod builtin;
 pub mod engine;
 pub mod rbac_engine;
-pub mod builtin;
 
+pub use builtin::{ActionAllowlistPolicy, AllowAllPolicy, DenyAllPolicy};
 pub use engine::PolicyEngine;
 pub use rbac_engine::RbacEngine;
-pub use builtin::{AllowAllPolicy, DenyAllPolicy, ActionAllowlistPolicy};

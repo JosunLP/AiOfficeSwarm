@@ -90,9 +90,10 @@ impl CapabilitySet {
 
     /// Returns `true` if this set satisfies all capabilities in `required`.
     pub fn satisfies_all(&self, required: &CapabilitySet) -> bool {
-        required.0.iter().all(|req| {
-            self.0.iter().any(|owned| owned.satisfies(req))
-        })
+        required
+            .0
+            .iter()
+            .all(|req| self.0.iter().any(|owned| owned.satisfies(req)))
     }
 
     /// Returns `true` if the set contains no capabilities.

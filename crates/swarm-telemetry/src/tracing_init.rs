@@ -13,8 +13,8 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 /// - `log_level`: sets the `EnvFilter` directive.
 /// - `log_format`: selects between human-readable text and JSON output.
 pub fn init_tracing(config: &TelemetryConfig) {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
 
     match config.log_format {
         LogFormat::Json => {

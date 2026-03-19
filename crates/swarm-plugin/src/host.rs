@@ -3,21 +3,17 @@
 //! The [`PluginHost`] is the runtime container for plugins. It owns all loaded
 //! plugin instances and routes invocations to the correct plugin.
 
+use chrono::Utc;
+use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use dashmap::DashMap;
-use chrono::Utc;
 
 use swarm_core::{
     error::{SwarmError, SwarmResult},
     identity::PluginId,
 };
 
-use crate::{
-    lifecycle::PluginState,
-    registry::PluginRegistry,
-    Plugin,
-};
+use crate::{lifecycle::PluginState, registry::PluginRegistry, Plugin};
 
 /// Runtime container for loaded plugins.
 ///
@@ -140,31 +136,36 @@ impl PluginHost {
         }
 
         let name = plugin.manifest().name.clone();
-        plugin.invoke(action, params).await.map_err(|e| {
-            SwarmError::PluginOperationFailed {
+        plugin
+            .invoke(action, params)
+            .await
+            .map_err(|e| SwarmError::PluginOperationFailed {
                 name,
                 reason: e.to_string(),
-            }
-        })
+            })
     }
 
     /// Unload a plugin gracefully.
     pub async fn unload(&self, plugin_id: &PluginId) -> SwarmResult<()> {
-        let instance = self.instances.get(plugin_id).map(|entry| Arc::clone(entry.value())).ok_or_else(|| {
-            SwarmError::PluginOperationFailed {
+        let instance = self
+            .instances
+            .get(plugin_id)
+            .map(|entry| Arc::clone(entry.value()))
+            .ok_or_else(|| SwarmError::PluginOperationFailed {
                 name: plugin_id.to_string(),
                 reason: "plugin not loaded".into(),
-            }
-        })?;
+            })?;
 
-        self.registry.update_state(plugin_id, PluginState::Unloading)?;
+        self.registry
+            .update_state(plugin_id, PluginState::Unloading)?;
         let mut plugin = instance.lock().await;
         let name = plugin.manifest().name.clone();
 
         match plugin.on_unload().await {
             Ok(()) => {
                 self.instances.remove(plugin_id);
-                self.registry.update_state(plugin_id, PluginState::Unloaded)?;
+                self.registry
+                    .update_state(plugin_id, PluginState::Unloaded)?;
                 tracing::info!(plugin_id = %plugin_id, name = %name, "Plugin unloaded");
                 Ok(())
             }
@@ -176,7 +177,8 @@ impl PluginHost {
                     "Plugin unload produced an error (continuing)"
                 );
                 self.instances.remove(plugin_id);
-                self.registry.update_state(plugin_id, PluginState::Unloaded)?;
+                self.registry
+                    .update_state(plugin_id, PluginState::Unloaded)?;
                 Ok(())
             }
         }
@@ -208,7 +210,7 @@ impl PluginHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{PluginManifest, PluginCapabilityKind};
+    use crate::manifest::{PluginCapabilityKind, PluginManifest};
     use async_trait::async_trait;
 
     struct EchoPlugin {
@@ -222,7 +224,9 @@ mod tests {
     impl EchoPlugin {
         fn new() -> Self {
             let mut manifest = PluginManifest::new("echo", "1.0.0", "test", "Echoes inputs");
-            manifest.capabilities.push(PluginCapabilityKind::ActionProvider);
+            manifest
+                .capabilities
+                .push(PluginCapabilityKind::ActionProvider);
             Self { manifest }
         }
     }
@@ -231,36 +235,60 @@ mod tests {
         fn new() -> Self {
             let mut manifest =
                 PluginManifest::new("failing-load", "1.0.0", "test", "Fails during load");
-            manifest.capabilities.push(PluginCapabilityKind::ActionProvider);
+            manifest
+                .capabilities
+                .push(PluginCapabilityKind::ActionProvider);
             Self { manifest }
         }
     }
 
     #[async_trait]
     impl Plugin for EchoPlugin {
-        fn manifest(&self) -> &PluginManifest { &self.manifest }
-        async fn on_load(&mut self) -> SwarmResult<()> { Ok(()) }
-        async fn on_unload(&mut self) -> SwarmResult<()> { Ok(()) }
-        async fn invoke(&mut self, _action: &str, params: serde_json::Value) -> SwarmResult<serde_json::Value> {
+        fn manifest(&self) -> &PluginManifest {
+            &self.manifest
+        }
+        async fn on_load(&mut self) -> SwarmResult<()> {
+            Ok(())
+        }
+        async fn on_unload(&mut self) -> SwarmResult<()> {
+            Ok(())
+        }
+        async fn invoke(
+            &mut self,
+            _action: &str,
+            params: serde_json::Value,
+        ) -> SwarmResult<serde_json::Value> {
             Ok(params)
         }
-        async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
+        async fn health_check(&self) -> SwarmResult<()> {
+            Ok(())
+        }
     }
 
     #[async_trait]
     impl Plugin for FailingLoadPlugin {
-        fn manifest(&self) -> &PluginManifest { &self.manifest }
+        fn manifest(&self) -> &PluginManifest {
+            &self.manifest
+        }
         async fn on_load(&mut self) -> SwarmResult<()> {
             Err(SwarmError::PluginInitFailed {
                 name: self.manifest.name.clone(),
                 reason: "load failed".into(),
             })
         }
-        async fn on_unload(&mut self) -> SwarmResult<()> { Ok(()) }
-        async fn invoke(&mut self, _action: &str, _params: serde_json::Value) -> SwarmResult<serde_json::Value> {
+        async fn on_unload(&mut self) -> SwarmResult<()> {
+            Ok(())
+        }
+        async fn invoke(
+            &mut self,
+            _action: &str,
+            _params: serde_json::Value,
+        ) -> SwarmResult<serde_json::Value> {
             Ok(serde_json::Value::Null)
         }
-        async fn health_check(&self) -> SwarmResult<()> { Ok(()) }
+        async fn health_check(&self) -> SwarmResult<()> {
+            Ok(())
+        }
     }
 
     #[tokio::test]
@@ -288,7 +316,10 @@ mod tests {
         let result = host.load(Box::new(plugin)).await;
 
         assert!(matches!(result, Err(SwarmError::PluginInitFailed { .. })));
-        let record = host.registry().get(&plugin_id).expect("failed load should remain visible");
+        let record = host
+            .registry()
+            .get(&plugin_id)
+            .expect("failed load should remain visible");
         assert_eq!(record.state.label(), "failed");
         assert!(host.registry().active_plugins().is_empty());
     }
@@ -301,7 +332,10 @@ mod tests {
         let mut failing_plugin = FailingLoadPlugin::new();
         failing_plugin.manifest.id = plugin_id;
         let first_result = host.load(Box::new(failing_plugin)).await;
-        assert!(matches!(first_result, Err(SwarmError::PluginInitFailed { .. })));
+        assert!(matches!(
+            first_result,
+            Err(SwarmError::PluginInitFailed { .. })
+        ));
 
         let mut echo_plugin = EchoPlugin::new();
         echo_plugin.manifest.id = plugin_id;
@@ -309,7 +343,11 @@ mod tests {
 
         assert_eq!(second_result.unwrap(), plugin_id);
         assert_eq!(
-            host.registry().get(&plugin_id).expect("plugin should be reloaded").state.label(),
+            host.registry()
+                .get(&plugin_id)
+                .expect("plugin should be reloaded")
+                .state
+                .label(),
             "active"
         );
     }
@@ -330,7 +368,11 @@ mod tests {
         let invoke_plugin_id = plugin_id;
         let invoke_task = tokio::spawn(async move {
             invoke_host
-                .invoke(&invoke_plugin_id, "echo", serde_json::json!({"msg": "hello"}))
+                .invoke(
+                    &invoke_plugin_id,
+                    "echo",
+                    serde_json::json!({"msg": "hello"}),
+                )
                 .await
         });
 
@@ -350,6 +392,9 @@ mod tests {
         ));
 
         unload_task.await.unwrap().unwrap();
-        assert_eq!(host.registry().get(&plugin_id).unwrap().state.label(), "unloaded");
+        assert_eq!(
+            host.registry().get(&plugin_id).unwrap().state.label(),
+            "unloaded"
+        );
     }
 }

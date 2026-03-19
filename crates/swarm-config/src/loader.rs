@@ -14,12 +14,11 @@ impl ConfigLoader {
     ///
     /// Missing optional keys fall back to their `Default` implementations.
     pub fn from_file(path: impl AsRef<Path>) -> SwarmResult<SwarmConfig> {
-        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
-            SwarmError::ConfigInvalid {
+        let content =
+            std::fs::read_to_string(path.as_ref()).map_err(|e| SwarmError::ConfigInvalid {
                 key: path.as_ref().display().to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
         Self::from_toml_str(&content)
     }
 

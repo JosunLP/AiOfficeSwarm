@@ -12,11 +12,7 @@
 //! Future versions may incorporate more sophisticated scheduling strategies
 //! (e.g., affinity rules, cost models, deadline-aware scheduling).
 
-use swarm_core::{
-    error::SwarmResult,
-    identity::AgentId,
-    task::Task,
-};
+use swarm_core::{error::SwarmResult, identity::AgentId, task::Task};
 
 use crate::registry::AgentRegistry;
 
@@ -145,7 +141,9 @@ mod tests {
         let task = Task::new(spec);
 
         let decision = scheduler.schedule(&task).unwrap();
-        assert!(matches!(decision, SchedulingDecision::Assigned { agent_id: id, .. } if id == agent_id));
+        assert!(
+            matches!(decision, SchedulingDecision::Assigned { agent_id: id, .. } if id == agent_id)
+        );
     }
 
     #[test]
@@ -162,7 +160,10 @@ mod tests {
         let task = Task::new(spec);
 
         let decision = scheduler.schedule(&task).unwrap();
-        assert!(matches!(decision, SchedulingDecision::NoCapableAgent { .. }));
+        assert!(matches!(
+            decision,
+            SchedulingDecision::NoCapableAgent { .. }
+        ));
     }
 
     #[test]
@@ -176,7 +177,10 @@ mod tests {
         let scheduler = Scheduler::new(registry);
         let task = Task::new(TaskSpec::new("task", serde_json::json!({})));
         let decision = scheduler.schedule(&task).unwrap();
-        assert!(matches!(decision, SchedulingDecision::NoCapableAgent { .. }));
+        assert!(matches!(
+            decision,
+            SchedulingDecision::NoCapableAgent { .. }
+        ));
         let _ = id; // suppress unused warning
     }
 }

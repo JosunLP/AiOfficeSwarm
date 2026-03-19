@@ -8,9 +8,7 @@ use dashmap::DashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use swarm_core::{
-    rbac::{Permission, Role, Subject},
-};
+use swarm_core::rbac::{Permission, Role, Subject};
 
 /// Manages role assignments and evaluates permission queries.
 #[derive(Clone, Default)]
@@ -41,7 +39,7 @@ impl RbacEngine {
         let role = role_name.into();
         self.assignments
             .entry(subject.clone())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(role.clone());
         tracing::debug!(subject = %subject, role = %role, "Role assigned to subject");
     }
