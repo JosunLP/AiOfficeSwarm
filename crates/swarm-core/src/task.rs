@@ -16,8 +16,15 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::capability::CapabilitySet;
+use crate::error::{SwarmError, SwarmResult};
 use crate::identity::{AgentId, TaskId};
 use crate::types::{Metadata, RetryPolicy};
+
+/// Smallest accepted explicit task timeout.
+pub const MIN_TASK_TIMEOUT: Duration = Duration::from_millis(1);
+
+/// Largest accepted explicit task timeout.
+pub const MAX_TASK_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// The specification describing *what* a task should do.
 ///
@@ -56,6 +63,37 @@ impl TaskSpec {
             retry_policy: RetryPolicy::default(),
             metadata: Metadata::new(),
         }
+    }
+
+    /// Validate the task specification before it enters the orchestrator.
+    pub fn validate(&self) -> SwarmResult<()> {
+        if self.name.trim().is_empty() {
+            return Err(SwarmError::InvalidTaskSpec {
+                reason: "task name must not be empty".into(),
+            });
+        }
+
+        if let Some(timeout) = self.timeout {
+            if timeout < MIN_TASK_TIMEOUT {
+                return Err(SwarmError::InvalidTaskSpec {
+                    reason: format!(
+                        "task timeout must be at least {}ms",
+                        MIN_TASK_TIMEOUT.as_millis()
+                    ),
+                });
+            }
+
+            if timeout > MAX_TASK_TIMEOUT {
+                return Err(SwarmError::InvalidTaskSpec {
+                    reason: format!(
+                        "task timeout must not exceed {}s",
+                        MAX_TASK_TIMEOUT.as_secs()
+                    ),
+                });
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -320,5 +358,27 @@ mod tests {
         task.time_out();
         assert!(task.status.is_terminal());
         assert_eq!(task.status.label(), "timed_out");
+    }
+
+    #[test]
+    fn task_spec_validation_rejects_zero_timeout() {
+        let mut spec = TaskSpec::new("invalid-timeout", serde_json::json!({}));
+        spec.timeout = Some(Duration::ZERO);
+
+        assert!(matches!(
+            spec.validate(),
+            Err(SwarmError::InvalidTaskSpec { reason }) if reason.contains("at least")
+        ));
+    }
+
+    #[test]
+    fn task_spec_validation_rejects_excessive_timeout() {
+        let mut spec = TaskSpec::new("invalid-timeout", serde_json::json!({}));
+        spec.timeout = Some(MAX_TASK_TIMEOUT + Duration::from_secs(1));
+
+        assert!(matches!(
+            spec.validate(),
+            Err(SwarmError::InvalidTaskSpec { reason }) if reason.contains("must not exceed")
+        ));
     }
 }

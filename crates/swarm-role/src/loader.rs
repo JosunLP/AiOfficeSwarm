@@ -14,6 +14,13 @@ use crate::parser::RoleParser;
 use crate::registry::RoleRegistry;
 use crate::validator::{RoleValidator, ValidationSeverity};
 
+/// Loader behavior toggles for role discovery and validation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RoleLoadOptions {
+    /// Treat validation warnings as blocking issues instead of soft diagnostics.
+    pub treat_warnings_as_errors: bool,
+}
+
 /// Result of loading a single role file.
 #[derive(Debug)]
 pub struct RoleLoadResult {
@@ -40,6 +47,29 @@ pub struct LoadSummary {
     pub warnings: usize,
     /// Per-file results.
     pub results: Vec<RoleLoadResult>,
+}
+
+impl LoadSummary {
+    /// Returns `true` when at least one file produced a hard error.
+    pub fn has_errors(&self) -> bool {
+        self.errors > 0
+            || self.results.iter().any(|result| {
+                result
+                    .issues
+                    .iter()
+                    .any(|issue| issue.severity == ValidationSeverity::Error)
+            })
+    }
+
+    /// Returns `true` when any file produced a warning.
+    pub fn has_warnings(&self) -> bool {
+        self.warnings > 0
+    }
+
+    /// Returns `true` if the summary should block startup or command success.
+    pub fn has_blocking_issues(&self, options: RoleLoadOptions) -> bool {
+        self.has_errors() || (options.treat_warnings_as_errors && self.has_warnings())
+    }
 }
 
 /// Loads role definitions from the filesystem.
@@ -72,7 +102,22 @@ impl RoleLoader {
     /// are skipped.
     pub fn load_directory(dir: &Path, registry: &RoleRegistry) -> RoleResult<LoadSummary> {
         let hierarchy = RoleHierarchy::from_default_organigram();
-        Self::load_directory_with_hierarchy(dir, registry, &hierarchy)
+        Self::load_directory_with_hierarchy_and_options(
+            dir,
+            registry,
+            &hierarchy,
+            RoleLoadOptions::default(),
+        )
+    }
+
+    /// Load all roles from a directory with caller-provided loader options.
+    pub fn load_directory_with_options(
+        dir: &Path,
+        registry: &RoleRegistry,
+        options: RoleLoadOptions,
+    ) -> RoleResult<LoadSummary> {
+        let hierarchy = RoleHierarchy::from_default_organigram();
+        Self::load_directory_with_hierarchy_and_options(dir, registry, &hierarchy, options)
     }
 
     /// Load all roles with a custom hierarchy.
@@ -80,6 +125,21 @@ impl RoleLoader {
         dir: &Path,
         registry: &RoleRegistry,
         hierarchy: &RoleHierarchy,
+    ) -> RoleResult<LoadSummary> {
+        Self::load_directory_with_hierarchy_and_options(
+            dir,
+            registry,
+            hierarchy,
+            RoleLoadOptions::default(),
+        )
+    }
+
+    /// Load all roles with a custom hierarchy and explicit loader options.
+    pub fn load_directory_with_hierarchy_and_options(
+        dir: &Path,
+        registry: &RoleRegistry,
+        hierarchy: &RoleHierarchy,
+        options: RoleLoadOptions,
     ) -> RoleResult<LoadSummary> {
         let role_files = Self::discover_role_files(dir)?;
         let total_files = role_files.len();
@@ -138,15 +198,19 @@ impl RoleLoader {
 
             let issues = RoleValidator::validate(&spec);
             let has_errors = RoleValidator::has_errors(&issues);
+            let has_warnings = issues
+                .iter()
+                .any(|issue| issue.severity == ValidationSeverity::Warning);
+            let blocked = has_errors || (options.treat_warnings_as_errors && has_warnings);
 
             results.push(RoleLoadResult {
                 path: rel_path,
-                spec: if has_errors { None } else { Some(spec.clone()) },
+                spec: if blocked { None } else { Some(spec.clone()) },
                 issues,
                 error: None,
             });
 
-            if !has_errors {
+            if !blocked {
                 specs.push(spec);
             }
         }
@@ -165,7 +229,15 @@ impl RoleLoader {
             }
         }
 
-        let errors = results.iter().filter(|r| r.error.is_some()).count();
+        let errors = results
+            .iter()
+            .filter(|r| {
+                r.error.is_some()
+                    || r.issues
+                        .iter()
+                        .any(|i| i.severity == ValidationSeverity::Error)
+            })
+            .count();
         let warnings = results
             .iter()
             .filter(|r| {
@@ -280,5 +352,30 @@ mod tests {
     fn is_role_file_rejects_non_md() {
         assert!(!RoleLoader::is_role_file(Path::new("data.json")));
         assert!(!RoleLoader::is_role_file(Path::new("script.sh")));
+    }
+
+    #[test]
+    fn load_summary_reports_blocking_issues_in_strict_mode() {
+        let summary = LoadSummary {
+            total_files: 1,
+            loaded: 0,
+            errors: 0,
+            warnings: 1,
+            results: vec![RoleLoadResult {
+                path: "roles/Test_Agent.md".into(),
+                spec: None,
+                issues: vec![crate::validator::ValidationIssue {
+                    field: "mission".into(),
+                    severity: ValidationSeverity::Warning,
+                    message: "warning".into(),
+                }],
+                error: None,
+            }],
+        };
+
+        assert!(summary.has_blocking_issues(RoleLoadOptions {
+            treat_warnings_as_errors: true,
+        }));
+        assert!(!summary.has_blocking_issues(RoleLoadOptions::default()));
     }
 }

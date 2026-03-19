@@ -1,14 +1,14 @@
 //! # Basic Swarm Example
 //!
-//! This example demonstrates the core usage of the AiOfficeSwarm framework:
+//! This example demonstrates an end-to-end AiOfficeSwarm baseline with:
 //!
-//! 1. Configuring telemetry.
-//! 2. Creating an orchestrator.
-//! 3. Registering agents with different capabilities.
-//! 4. Submitting tasks and dispatching them.
-//! 5. Collecting results.
-//! 6. Loading and invoking a plugin.
-//! 7. Configuring the policy engine for application-managed admission control.
+//! 1. telemetry and orchestrator setup,
+//! 2. role loading,
+//! 3. provider registration,
+//! 4. memory seeding,
+//! 5. runtime context assembly for policy, roles, memory, learning, and providers,
+//! 6. agent execution,
+//! 7. plugin invocation.
 
 use std::sync::Arc;
 
@@ -24,13 +24,20 @@ use swarm_core::{
     policy::PolicyContext,
     task::{Task, TaskPriority, TaskSpec, TaskStatus},
 };
+use swarm_learning::{store::InMemoryLearningStore, LearningScope, LearningStore};
+use swarm_memory::{
+    in_memory::InMemoryBackend, MemoryBackend, MemoryEntry, MemoryScope, MemoryType,
+};
 use swarm_orchestrator::Orchestrator;
+use swarm_personality::PersonalityProfile;
 use swarm_plugin::PluginHost;
 use swarm_policy::{AllowAllPolicy, PolicyEngine};
-use swarm_runtime::TaskRunner;
+use swarm_provider::{
+    ChatRequest, ChatResponse, ModelProvider, ProviderCapabilities, ProviderRegistry,
+};
+use swarm_role::RoleLoadOptions;
+use swarm_runtime::{TaskExecutionContext, TaskRunner};
 use swarm_telemetry::{init_tracing, Metrics};
-
-// ─── Custom Agent Implementation ─────────────────────────────────────────────
 
 fn orchestrator_config_from_swarm(
     config: &swarm_config::model::OrchestratorConfig,
@@ -66,12 +73,13 @@ impl Agent for TextProcessingAgent {
 
     async fn execute(&mut self, task: Task) -> SwarmResult<serde_json::Value> {
         let text = task.spec.input["text"].as_str().unwrap_or("(no text)");
-        // Simulate processing.
         let word_count = text.split_whitespace().count();
         info!(
             agent = %self.descriptor.name,
             task = task.spec.name,
             word_count,
+            provider = task.spec.metadata.get("swarm.provider.name").unwrap_or("n/a"),
+            personality = task.spec.metadata.get("swarm.personality.name").unwrap_or("n/a"),
             "Processing text task"
         );
         Ok(json!({
@@ -79,6 +87,9 @@ impl Agent for TextProcessingAgent {
             "original_length": text.len(),
             "word_count": word_count,
             "summary": format!("[Summary of {} words]", word_count),
+            "provider": task.spec.metadata.get("swarm.provider.name"),
+            "personality": task.spec.metadata.get("swarm.personality.name"),
+            "memory_entries": task.spec.metadata.get("swarm.memory.entry_count"),
         }))
     }
 
@@ -102,6 +113,12 @@ impl DataAnalysisAgent {
             descriptor: AgentDescriptor::new(name, AgentKind::Worker, caps),
         }
     }
+}
+
+/// Minimal built-in provider used only to demonstrate provider-aware runtime
+/// selection metadata in the example.
+struct DemoProvider {
+    id: swarm_core::PluginId,
 }
 
 fn summarize_values(values: &[f64]) -> (f64, f64, Option<f64>, Option<f64>) {
@@ -144,6 +161,7 @@ impl Agent for DataAnalysisAgent {
             agent = %self.descriptor.name,
             task = task.spec.name,
             n = values.len(),
+            provider = task.spec.metadata.get("swarm.provider.name").unwrap_or("n/a"),
             "Analyzing data"
         );
 
@@ -154,6 +172,9 @@ impl Agent for DataAnalysisAgent {
             "mean": mean,
             "max": max,
             "min": min,
+            "provider": task.spec.metadata.get("swarm.provider.name"),
+            "personality": task.spec.metadata.get("swarm.personality.name"),
+            "memory_entries": task.spec.metadata.get("swarm.memory.entry_count"),
         }))
     }
 
@@ -162,51 +183,100 @@ impl Agent for DataAnalysisAgent {
     }
 }
 
-// ─── Main ────────────────────────────────────────────────────────────────────
+#[async_trait]
+impl ModelProvider for DemoProvider {
+    fn id(&self) -> swarm_core::PluginId {
+        self.id
+    }
+
+    fn name(&self) -> &str {
+        "demo-provider"
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            chat_completion: true,
+            json_mode: true,
+            models: vec![swarm_provider::capabilities::ModelDescriptor {
+                model_id: "demo-chat-v1".into(),
+                display_name: "Demo Chat v1".into(),
+                max_context_tokens: Some(8192),
+                max_output_tokens: Some(1024),
+                supports_tools: false,
+                supports_vision: false,
+                supports_streaming: false,
+                supports_json_mode: true,
+                is_reasoning_model: false,
+            }],
+            ..Default::default()
+        }
+    }
+
+    async fn chat_completion(&self, request: ChatRequest) -> SwarmResult<ChatResponse> {
+        Ok(ChatResponse {
+            model: request.model,
+            content: Some("demo".into()),
+            tool_calls: Vec::new(),
+            finish_reason: None,
+            usage: None,
+            response_id: None,
+            extra: serde_json::Value::Null,
+        })
+    }
+
+    async fn health_check(&self) -> SwarmResult<swarm_provider::traits::ProviderHealth> {
+        Ok(swarm_provider::traits::ProviderHealth {
+            healthy: true,
+            latency_ms: Some(5),
+            message: Some("demo provider healthy".into()),
+        })
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 1. Load configuration.
     let config = ConfigLoader::with_env_overrides(ConfigLoader::defaults());
     init_tracing(&config.telemetry);
 
     println!("╔═══════════════════════════════════════════════╗");
-    println!("║       AiOfficeSwarm — Basic Example           ║");
+    println!("║  AiOfficeSwarm — Runtime Context Demo        ║");
     println!("╚═══════════════════════════════════════════════╝\n");
 
-    // 2. Create the orchestrator.
     let orch = Orchestrator::with_config(orchestrator_config_from_swarm(&config.orchestrator));
     let handle = orch.handle();
     let metrics = Metrics::new();
 
-    // 3. Set up a permissive policy engine for this demo.
     let policy_engine = PolicyEngine::allow_by_default();
     policy_engine
         .register(Arc::new(AllowAllPolicy::new("demo-allow-all")))
         .await;
 
-    // 4. Demonstrate role loading (if roles/ directory exists).
     println!("── Loading Roles ───────────────────────────────");
     let role_registry = swarm_role::RoleRegistry::new();
-
     let roles_dir = std::path::Path::new("roles");
     if roles_dir.exists() {
-        match swarm_role::RoleLoader::load_directory(roles_dir, &role_registry) {
+        match swarm_role::RoleLoader::load_directory_with_options(
+            roles_dir,
+            &role_registry,
+            RoleLoadOptions {
+                treat_warnings_as_errors: config.roles.strict_validation,
+            },
+        ) {
             Ok(summary) => {
                 println!(
                     "  ✓ Loaded {} / {} roles",
                     summary.loaded, summary.total_files
                 );
-                for r in &summary.results {
-                    if let Some(ref spec) = r.spec {
-                        println!(
-                            "    • {} ({:?}, {:?})",
-                            spec.name, spec.department, spec.agent_kind
-                        );
-                    }
-                }
                 if summary.errors > 0 {
                     println!("  ⚠ {} files failed to load", summary.errors);
+                }
+                if summary.has_blocking_issues(RoleLoadOptions {
+                    treat_warnings_as_errors: config.roles.strict_validation,
+                }) {
+                    return Err(anyhow::anyhow!(
+                        "role loading produced blocking issues (strict_validation={})",
+                        config.roles.strict_validation
+                    ));
                 }
             }
             Err(e) => println!("  ⚠ Could not load roles: {e}"),
@@ -216,24 +286,76 @@ async fn main() -> anyhow::Result<()> {
     }
     println!();
 
-    // 5. Register agents.
+    let memory_backend = Arc::new(InMemoryBackend::new());
+    let learning_store = Arc::new(InMemoryLearningStore::new());
+    let provider_registry = Arc::new(ProviderRegistry::new());
+    provider_registry.register(Arc::new(DemoProvider {
+        id: swarm_core::PluginId::new(),
+    }))?;
+
     println!("── Registering Agents ──────────────────────────");
-    let text_agent = TextProcessingAgent::new("TextProcessor-1");
+    let mut text_agent = TextProcessingAgent::new("TextProcessor-1");
+    text_agent.descriptor.role_id = Some("Support Agent".into());
+    text_agent.descriptor.learning_policy.enabled = true;
+    text_agent.descriptor.learning_policy.require_approval = true;
+    text_agent.descriptor.memory_profile.readable_scopes = vec!["agent".into()];
+    text_agent.descriptor.memory_profile.writable_scopes = vec!["agent".into()];
+    text_agent
+        .descriptor
+        .provider_preferences
+        .preferred_provider = Some("demo-provider".into());
+    text_agent.descriptor.provider_preferences.preferred_model = Some("demo-chat-v1".into());
     let text_agent_id = handle.register_agent(text_agent.descriptor().clone())?;
     handle.set_agent_ready(text_agent_id)?;
     metrics.inc_agents_registered();
-    println!("  ✓ TextProcessor-1 registered (text-processing, summarization)");
+    println!("  ✓ TextProcessor-1 registered");
 
-    let data_agent = DataAnalysisAgent::new("DataAnalyst-1");
+    let mut data_agent = DataAnalysisAgent::new("DataAnalyst-1");
+    data_agent.descriptor.role_id = Some("Data Analytics Agent".into());
+    data_agent.descriptor.learning_policy.enabled = true;
+    data_agent.descriptor.learning_policy.require_approval = true;
+    data_agent.descriptor.memory_profile.readable_scopes = vec!["agent".into()];
+    data_agent.descriptor.memory_profile.writable_scopes = vec!["agent".into()];
+    data_agent
+        .descriptor
+        .provider_preferences
+        .preferred_provider = Some("demo-provider".into());
+    data_agent.descriptor.provider_preferences.preferred_model = Some("demo-chat-v1".into());
     let data_agent_id = handle.register_agent(data_agent.descriptor().clone())?;
     handle.set_agent_ready(data_agent_id)?;
     metrics.inc_agents_registered();
-    println!("  ✓ DataAnalyst-1 registered (data-analysis, report-generation)");
+    println!("  ✓ DataAnalyst-1 registered");
     println!();
 
-    // 6. Submit tasks with varying priorities.
-    println!("── Submitting Tasks ────────────────────────────");
+    memory_backend
+        .store(MemoryEntry::new(
+            MemoryScope::Agent {
+                agent_id: text_agent_id.to_string(),
+            },
+            MemoryType::Summary,
+            json!({"summary": "Use concise, customer-safe language for summaries."}),
+        ))
+        .await?;
+    memory_backend
+        .store(MemoryEntry::new(
+            MemoryScope::Agent {
+                agent_id: data_agent_id.to_string(),
+            },
+            MemoryType::Summary,
+            json!({"summary": "Include mean, min, and max in analytics outputs."}),
+        ))
+        .await?;
 
+    let execution_context = TaskExecutionContext::new()
+        .with_policy_engine(policy_engine.clone())
+        .with_role_registry(role_registry.clone())
+        .with_memory_backend(memory_backend.clone())
+        .with_learning_store(learning_store.clone())
+        .with_learning_scope(LearningScope::Global)
+        .with_provider_registry(provider_registry.clone())
+        .with_default_personality(PersonalityProfile::new("Enterprise Base", "1.0.0"));
+
+    println!("── Submitting Tasks ────────────────────────────");
     let mut text_spec = TaskSpec::new(
         "summarize-report",
         json!({ "text": "The quarterly report shows strong performance across all business units. Revenue grew by 15% year-over-year driven by product innovation and geographic expansion." }),
@@ -245,9 +367,8 @@ async fn main() -> anyhow::Result<()> {
         c
     };
     enforce_policy_check(&policy_engine, "submit_task", "task-queue").await?;
-    let _task1_id = handle.submit_task(text_spec)?;
+    handle.submit_task(text_spec)?;
     metrics.inc_tasks_submitted();
-    println!("  ✓ Submitted: summarize-report (High priority)");
 
     let mut data_spec = TaskSpec::new(
         "analyze-sales",
@@ -259,34 +380,36 @@ async fn main() -> anyhow::Result<()> {
         c
     };
     enforce_policy_check(&policy_engine, "submit_task", "task-queue").await?;
-    let _task2_id = handle.submit_task(data_spec)?;
+    handle.submit_task(data_spec)?;
     metrics.inc_tasks_submitted();
-    println!("  ✓ Submitted: analyze-sales (Normal priority)");
 
     enforce_policy_check(&policy_engine, "submit_task", "task-queue").await?;
-    let _task3_id = handle.submit_task(TaskSpec::new(
+    handle.submit_task(TaskSpec::new(
         "summarize-meeting-notes",
         json!({ "text": "Team standup: sprint velocity is on track, two blockers identified in the backend integration module." }),
     ))?;
     metrics.inc_tasks_submitted();
-    println!("  ✓ Submitted: summarize-meeting-notes (Normal priority)");
+    println!("  ✓ Submitted three demo tasks");
     println!();
 
-    // 7. Schedule and execute tasks.
     println!("── Executing Tasks ─────────────────────────────");
+    let mut text_runner = TaskRunner::new(Box::new(text_agent), handle.clone())
+        .with_execution_context(execution_context.clone());
+    let mut data_runner = TaskRunner::new(Box::new(data_agent), handle.clone())
+        .with_execution_context(execution_context.clone());
 
-    let mut text_runner = TaskRunner::new(Box::new(text_agent), handle.clone());
-    let mut data_runner = TaskRunner::new(Box::new(data_agent), handle.clone());
-
-    // Schedule and run task 1.
     if let Some(task_id) = handle.try_schedule_next()? {
         let task = handle.get_task(&task_id)?;
         let output = text_runner.run_task(task).await?;
         metrics.inc_tasks_completed();
-        println!("  ✓ summarize-report → {:?}", output);
+        println!(
+            "  ✓ summarize-report → provider={}, personality={}, memory_entries={}",
+            output["provider"].as_str().unwrap_or("n/a"),
+            output["personality"].as_str().unwrap_or("n/a"),
+            output["memory_entries"].as_str().unwrap_or("0")
+        );
     }
 
-    // Schedule and run task 2.
     if let Some(task_id) = handle.try_schedule_next()? {
         let task = handle.get_task(&task_id)?;
         let output = data_runner.run_task(task).await?;
@@ -297,10 +420,13 @@ async fn main() -> anyhow::Result<()> {
             .as_f64()
             .ok_or_else(|| anyhow::anyhow!("expected numeric max in analyze-sales output"))?;
         metrics.inc_tasks_completed();
-        println!("  ✓ analyze-sales    → mean={mean:.2}, max={max:.2}");
+        println!(
+            "  ✓ analyze-sales    → mean={mean:.2}, max={max:.2}, provider={}, memory_entries={}",
+            output["provider"].as_str().unwrap_or("n/a"),
+            output["memory_entries"].as_str().unwrap_or("0")
+        );
     }
 
-    // Mark agents ready again for task 3.
     handle.set_agent_ready(text_runner.agent_id())?;
     handle.set_agent_ready(data_runner.agent_id())?;
     if let Some(task_id) = handle.try_schedule_next()? {
@@ -315,11 +441,14 @@ async fn main() -> anyhow::Result<()> {
             data_runner.run_task(task).await?
         };
         metrics.inc_tasks_completed();
-        println!("  ✓ summarize-meeting → {:?}", output["summary"]);
+        println!(
+            "  ✓ summarize-meeting → summary={:?}, provider={}",
+            output["summary"],
+            output["provider"].as_str().unwrap_or("n/a")
+        );
     }
     println!();
 
-    // 8. Load and invoke a plugin.
     println!("── Plugin Demonstration ────────────────────────");
     let plugin_host = PluginHost::new();
     let plugin_id = plugin_host
@@ -346,17 +475,19 @@ async fn main() -> anyhow::Result<()> {
     );
     println!();
 
-    // 9. Print summary.
     println!("── Summary ─────────────────────────────────────");
     let snap = metrics.snapshot();
-    println!("  Tasks submitted:  {}", snap.tasks_submitted);
-    println!("  Tasks completed:  {}", snap.tasks_completed);
-    println!("  Tasks failed:     {}", snap.tasks_failed);
-    println!("  Agents active:    {}", snap.agents_registered);
-    println!("  Plugin invocations: {}", snap.plugin_invocations);
+    println!("  Tasks submitted:        {}", snap.tasks_submitted);
+    println!("  Tasks completed:        {}", snap.tasks_completed);
+    println!("  Tasks failed:           {}", snap.tasks_failed);
+    println!("  Agents active:          {}", snap.agents_registered);
+    println!("  Plugin invocations:     {}", snap.plugin_invocations);
+    let pending_learning = learning_store
+        .list_pending_approvals(&LearningScope::Global)
+        .await?;
+    println!("  Pending learning queue: {}", pending_learning.len());
 
     println!("\nAll done! ✓");
-
     Ok(())
 }
 

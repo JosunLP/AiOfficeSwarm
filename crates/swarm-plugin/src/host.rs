@@ -55,6 +55,7 @@ impl PluginHost {
     /// Load a plugin: register it, call `on_load`, and mark it active.
     pub async fn load(&self, mut plugin: Box<dyn Plugin>) -> SwarmResult<PluginId> {
         let manifest = plugin.manifest().clone();
+        manifest.validate_for_host(env!("CARGO_PKG_VERSION"))?;
         let id = manifest.id;
         let name = manifest.name.clone();
 
@@ -210,7 +211,7 @@ impl PluginHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{PluginCapabilityKind, PluginManifest};
+    use crate::manifest::{PluginAction, PluginCapabilityKind, PluginManifest};
     use async_trait::async_trait;
 
     struct EchoPlugin {
@@ -221,12 +222,22 @@ mod tests {
         manifest: PluginManifest,
     }
 
+    struct InvalidManifestPlugin {
+        manifest: PluginManifest,
+    }
+
     impl EchoPlugin {
         fn new() -> Self {
             let mut manifest = PluginManifest::new("echo", "1.0.0", "test", "Echoes inputs");
             manifest
                 .capabilities
                 .push(PluginCapabilityKind::ActionProvider);
+            manifest.actions.push(PluginAction {
+                name: "echo".into(),
+                description: "Echo the provided parameters".into(),
+                input_schema: None,
+                output_schema: None,
+            });
             Self { manifest }
         }
     }
@@ -238,6 +249,27 @@ mod tests {
             manifest
                 .capabilities
                 .push(PluginCapabilityKind::ActionProvider);
+            manifest.actions.push(PluginAction {
+                name: "fail".into(),
+                description: "Always fails during load".into(),
+                input_schema: None,
+                output_schema: None,
+            });
+            Self { manifest }
+        }
+    }
+
+    impl InvalidManifestPlugin {
+        fn new() -> Self {
+            let mut manifest = PluginManifest::new(
+                "invalid-manifest",
+                "1.0.0",
+                "test",
+                "Has invalid manifest metadata",
+            );
+            manifest
+                .required_permissions
+                .push("invalid-permission".into());
             Self { manifest }
         }
     }
@@ -275,6 +307,29 @@ mod tests {
                 name: self.manifest.name.clone(),
                 reason: "load failed".into(),
             })
+        }
+        async fn on_unload(&mut self) -> SwarmResult<()> {
+            Ok(())
+        }
+        async fn invoke(
+            &mut self,
+            _action: &str,
+            _params: serde_json::Value,
+        ) -> SwarmResult<serde_json::Value> {
+            Ok(serde_json::Value::Null)
+        }
+        async fn health_check(&self) -> SwarmResult<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Plugin for InvalidManifestPlugin {
+        fn manifest(&self) -> &PluginManifest {
+            &self.manifest
+        }
+        async fn on_load(&mut self) -> SwarmResult<()> {
+            Ok(())
         }
         async fn on_unload(&mut self) -> SwarmResult<()> {
             Ok(())
@@ -396,5 +451,18 @@ mod tests {
             host.registry().get(&plugin_id).unwrap().state.label(),
             "unloaded"
         );
+    }
+
+    #[tokio::test]
+    async fn load_rejects_invalid_manifest_before_registration() {
+        let host = PluginHost::new();
+
+        let error = host
+            .load(Box::new(InvalidManifestPlugin::new()))
+            .await
+            .expect_err("invalid manifest should be rejected");
+
+        assert!(matches!(error, SwarmError::ConfigInvalid { .. }));
+        assert!(host.registry().all().is_empty());
     }
 }

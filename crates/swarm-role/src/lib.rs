@@ -61,7 +61,7 @@ pub mod personality_bridge;
 // Re-export primary types at the crate root.
 pub use error::{RoleError, RoleResult};
 pub use hierarchy::RoleHierarchy;
-pub use loader::RoleLoader;
+pub use loader::{RoleLoadOptions, RoleLoader};
 pub use model::{
     DepartmentCategory, EffectiveRoleProfile, EscalationPolicy, RawRoleSource,
     RoleCollaborationRule, RoleId, RoleLearningPolicy, RoleMemoryPolicy, RoleMetadata, RoleSpec,

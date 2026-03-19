@@ -14,6 +14,8 @@
 //! [`PluginManifest`] before being handed to the [`crate::PluginHost`].
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use swarm_core::error::{SwarmError, SwarmResult};
 use swarm_core::identity::PluginId;
 
 /// Describes the type of capability a plugin provides.
@@ -170,6 +172,162 @@ impl PluginManifest {
             wasm_permissions: Vec::new(),
         }
     }
+
+    /// Validate the manifest for basic structural correctness and host compatibility.
+    pub fn validate_for_host(&self, host_version: &str) -> SwarmResult<()> {
+        if self.name.trim().is_empty() {
+            return Err(SwarmError::ConfigInvalid {
+                key: "plugin.name".into(),
+                reason: "plugin name must not be empty".into(),
+            });
+        }
+
+        if self.author.trim().is_empty() {
+            return Err(SwarmError::ConfigInvalid {
+                key: format!("plugin.{}.author", self.name),
+                reason: "plugin author must not be empty".into(),
+            });
+        }
+
+        validate_semver_field(&self.version, &format!("plugin.{}.version", self.name))?;
+        validate_semver_field(
+            &self.min_host_version,
+            &format!("plugin.{}.min_host_version", self.name),
+        )?;
+
+        if compare_semver_triplets(host_version, &self.min_host_version)?
+            == std::cmp::Ordering::Less
+        {
+            return Err(SwarmError::PluginVersionMismatch {
+                name: self.name.clone(),
+                plugin_version: self.min_host_version.clone(),
+                host_version: host_version.into(),
+            });
+        }
+
+        let mut seen_actions = HashSet::new();
+        for action in &self.actions {
+            if action.name.trim().is_empty() {
+                return Err(SwarmError::ConfigInvalid {
+                    key: format!("plugin.{}.actions", self.name),
+                    reason: "plugin action names must not be empty".into(),
+                });
+            }
+            if !seen_actions.insert(action.name.to_ascii_lowercase()) {
+                return Err(SwarmError::ConfigInvalid {
+                    key: format!("plugin.{}.actions", self.name),
+                    reason: format!("duplicate action '{}' declared", action.name),
+                });
+            }
+        }
+
+        if !self.actions.is_empty()
+            && !self
+                .capabilities
+                .iter()
+                .any(|capability| capability == &PluginCapabilityKind::ActionProvider)
+        {
+            return Err(SwarmError::ConfigInvalid {
+                key: format!("plugin.{}.capabilities", self.name),
+                reason: "plugins declaring actions must include the ActionProvider capability"
+                    .into(),
+            });
+        }
+
+        if self.actions.is_empty()
+            && self
+                .capabilities
+                .iter()
+                .any(|capability| capability == &PluginCapabilityKind::ActionProvider)
+        {
+            return Err(SwarmError::ConfigInvalid {
+                key: format!("plugin.{}.actions", self.name),
+                reason: "ActionProvider plugins must declare at least one action".into(),
+            });
+        }
+
+        let mut seen_permissions = HashSet::new();
+        for permission in &self.required_permissions {
+            if !is_valid_permission(permission) {
+                return Err(SwarmError::ConfigInvalid {
+                    key: format!("plugin.{}.required_permissions", self.name),
+                    reason: format!(
+                        "permission '{}' must use the 'verb:resource' format",
+                        permission
+                    ),
+                });
+            }
+
+            if !seen_permissions.insert(permission.to_ascii_lowercase()) {
+                return Err(SwarmError::ConfigInvalid {
+                    key: format!("plugin.{}.required_permissions", self.name),
+                    reason: format!("duplicate required permission '{}' declared", permission),
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_semver_field(value: &str, key: &str) -> SwarmResult<()> {
+    if value.trim().is_empty() {
+        return Err(SwarmError::ConfigInvalid {
+            key: key.into(),
+            reason: "must not be empty".into(),
+        });
+    }
+
+    parse_semver_triplet(value).map(|_| ())
+}
+
+fn compare_semver_triplets(left: &str, right: &str) -> SwarmResult<std::cmp::Ordering> {
+    let left = parse_semver_triplet(left)?;
+    let right = parse_semver_triplet(right)?;
+    Ok(left.cmp(&right))
+}
+
+fn parse_semver_triplet(value: &str) -> SwarmResult<(u64, u64, u64)> {
+    let cleaned = value.trim().trim_start_matches('v');
+    let mut parts = cleaned.split('.');
+    let parsed = (
+        parts
+            .next()
+            .ok_or_else(|| invalid_semver(value))?
+            .parse::<u64>()
+            .map_err(|_| invalid_semver(value))?,
+        parts
+            .next()
+            .ok_or_else(|| invalid_semver(value))?
+            .parse::<u64>()
+            .map_err(|_| invalid_semver(value))?,
+        parts
+            .next()
+            .ok_or_else(|| invalid_semver(value))?
+            .parse::<u64>()
+            .map_err(|_| invalid_semver(value))?,
+    );
+
+    if parts.next().is_some() {
+        return Err(invalid_semver(value));
+    }
+
+    Ok(parsed)
+}
+
+fn invalid_semver(value: &str) -> SwarmError {
+    SwarmError::ConfigInvalid {
+        key: "plugin.semver".into(),
+        reason: format!("'{}' is not a valid semantic version triplet", value),
+    }
+}
+
+fn is_valid_permission(value: &str) -> bool {
+    let mut parts = value.split(':');
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(verb), Some(resource), None) if !verb.trim().is_empty() && !resource.trim().is_empty()
+    )
 }
 
 #[cfg(test)]
@@ -226,5 +384,54 @@ mod tests {
     fn manifest_wasm_permissions_default_empty() {
         let m = PluginManifest::new("test", "1.0.0", "author", "desc");
         assert!(m.wasm_permissions.is_empty());
+    }
+
+    #[test]
+    fn validate_manifest_rejects_duplicate_actions() {
+        let mut manifest = PluginManifest::new("test", "1.0.0", "author", "desc");
+        manifest
+            .capabilities
+            .push(PluginCapabilityKind::ActionProvider);
+        manifest.actions.push(PluginAction {
+            name: "echo".into(),
+            description: "first".into(),
+            input_schema: None,
+            output_schema: None,
+        });
+        manifest.actions.push(PluginAction {
+            name: "echo".into(),
+            description: "second".into(),
+            input_schema: None,
+            output_schema: None,
+        });
+
+        assert!(matches!(
+            manifest.validate_for_host("0.1.0"),
+            Err(SwarmError::ConfigInvalid { reason, .. }) if reason.contains("duplicate action")
+        ));
+    }
+
+    #[test]
+    fn validate_manifest_rejects_invalid_permission_format() {
+        let mut manifest = PluginManifest::new("test", "1.0.0", "author", "desc");
+        manifest.required_permissions.push("read-config".into());
+
+        assert!(matches!(
+            manifest.validate_for_host("0.1.0"),
+            Err(SwarmError::ConfigInvalid { reason, .. }) if reason.contains("verb:resource")
+        ));
+    }
+
+    #[test]
+    fn validate_manifest_rejects_incompatible_host_version() {
+        let manifest = PluginManifest {
+            min_host_version: "9.9.9".into(),
+            ..PluginManifest::new("test", "1.0.0", "author", "desc")
+        };
+
+        assert!(matches!(
+            manifest.validate_for_host("0.1.0"),
+            Err(SwarmError::PluginVersionMismatch { .. })
+        ));
     }
 }

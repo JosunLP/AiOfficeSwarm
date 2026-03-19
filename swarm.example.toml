@@ -28,6 +28,8 @@ otlp_enabled = false
 
 [providers]
 # Enable provider-aware routing and compatibility checks.
+# These settings are consumed when an embedding application or example attaches
+# provider-aware execution context to the runtime.
 enabled = true
 # Exclude unhealthy providers from routing decisions.
 require_healthy = true
@@ -48,6 +50,8 @@ cost_preference = "balanced"
 latency_preference = "balanced"
 
 [memory]
+# Memory settings take effect when the runtime is paired with a MemoryBackend
+# through `swarm-runtime::TaskExecutionContext`.
 # in-memory | plugin
 backend = "in-memory"
 auto_apply_retention = true
@@ -55,6 +59,8 @@ redact_personal_data = true
 retention_interval_secs = 300
 
 [learning]
+# Learning settings define governance defaults for runtime-integrated learning
+# output capture and approval flows.
 enabled = false
 require_approval_by_default = true
 max_pending_outputs = 100

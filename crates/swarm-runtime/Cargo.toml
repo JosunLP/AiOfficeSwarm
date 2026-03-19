@@ -11,6 +11,12 @@ repository.workspace = true
 [dependencies]
 swarm-core = { workspace = true }
 swarm-orchestrator = { workspace = true }
+swarm-policy = { workspace = true }
+swarm-provider = { workspace = true }
+swarm-personality = { workspace = true }
+swarm-memory = { workspace = true }
+swarm-learning = { workspace = true }
+swarm-role = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
@@ -22,3 +28,4 @@ rand = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+swarm-policy = { workspace = true }

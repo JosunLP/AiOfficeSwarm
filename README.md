@@ -17,6 +17,7 @@ platforms).
 - **Policy engine** — deny-by-default RBAC and allow/deny policy primitives for embedding applications
 - **Plugin SDK** — first-class plugin system with lifecycle management
 - **Role-aware operations** — first-class role loading and validation from the `roles/` directory
+- **Execution-time context assembly** — role, personality, memory, learning, and provider context can be attached to task execution without changing the `Agent` trait
 - **Provider-aware configuration** — routing defaults, allow/block controls, and compatibility posture
 - **Memory and learning governance** — configurable retention, redaction, approval, and scope defaults
 - **Fault tolerance** — circuit breakers, configurable retry with exponential backoff
@@ -208,6 +209,40 @@ The CLI now exposes lightweight inspection commands for key enterprise concepts:
 - `swarm role validate` — validate role files and print diagnostics.
 - `swarm learning inspect` — show the effective learning governance baseline.
 - `swarm config --format json` — inspect the full effective configuration, including provider, memory, learning, plugin, and role settings.
+
+---
+
+## Runtime integration baseline
+
+The framework now includes a concrete execution-time integration seam through
+`swarm-runtime::TaskExecutionContext`.
+
+When attached to a `TaskRunner`, the runtime can:
+
+- enforce an execution-time policy check,
+- resolve role-derived personality overlays,
+- retrieve memory context into task metadata,
+- persist episodic execution memories,
+- capture learning outputs for approval queues,
+- annotate tasks with provider-routing selections.
+
+This keeps the public `Agent` trait stable while making the cognition and
+provider subsystems materially useful at runtime.
+
+Current limits remain explicit:
+
+- provider routing currently annotates execution context rather than invoking providers directly,
+- orchestrator-level submit/schedule policy enforcement is still an embedding concern,
+- cross-process learning queue inspection is not yet implemented.
+
+The injected metadata includes keys such as:
+
+- `swarm.role.name`
+- `swarm.personality.profile_json`
+- `swarm.memory.context_json`
+- `swarm.provider.name`
+
+See `examples/basic_swarm/` for an end-to-end reference flow.
 
 ---
 

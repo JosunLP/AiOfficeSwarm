@@ -179,11 +179,7 @@ impl OrchestratorHandle {
     /// The task is validated, stored, and placed in the priority queue.
     /// Returns the new task's ID.
     pub fn submit_task(&self, spec: TaskSpec) -> SwarmResult<TaskId> {
-        if spec.name.trim().is_empty() {
-            return Err(SwarmError::InvalidTaskSpec {
-                reason: "task name must not be empty".into(),
-            });
-        }
+        spec.validate()?;
         let task = Task::new(spec);
         let task_id = task.id;
         self.state.tasks.insert(task_id, task.clone());
@@ -356,6 +352,15 @@ impl OrchestratorHandle {
     /// Subscribe to the orchestrator event bus.
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.state.event_tx.subscribe()
+    }
+
+    /// Publish an event onto the orchestrator event bus.
+    ///
+    /// This is primarily intended for sibling runtime components that need to
+    /// surface memory, learning, provider, or personality events without
+    /// taking a direct dependency on the orchestrator's internal state.
+    pub fn publish_event(&self, kind: EventKind) {
+        self.state.emit(kind);
     }
 }
 

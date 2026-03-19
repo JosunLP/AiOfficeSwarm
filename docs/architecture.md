@@ -12,13 +12,17 @@ analysis, content generation, customer support, finance operations, and more.
 
 ## Layered Architecture
 
-```
+```text
 ┌──────────────────────────────────────────────────────────┐
 │                    Interface Layer                         │
 │  swarm-cli (CLI)  │  API surface (future HTTP/gRPC)       │
 ├──────────────────────────────────────────────────────────┤
 │                   Plugin / Integration Layer               │
 │  swarm-plugin SDK │ example-integration │ custom plugins  │
+├──────────────────────────────────────────────────────────┤
+│               Cognition & Provider Layer                   │
+│  swarm-role │ swarm-personality │ swarm-memory            │
+│  swarm-learning │ swarm-provider                         │
 ├──────────────────────────────────────────────────────────┤
 │                    Policy Layer                            │
 │  swarm-policy: RBAC engine, policy evaluation, admission  │
@@ -39,16 +43,17 @@ analysis, content generation, customer support, finance operations, and more.
 
 ### Layer Responsibilities
 
-| Layer | Crate(s) | Key Concerns |
-|-------|----------|--------------|
-| Core domain | `swarm-core` | Agent/Task/Policy/RBAC types; error model; event types |
-| Control plane | `swarm-orchestrator` | Agent registry; task queue; capability-based scheduling; supervision trees |
-| Policy | `swarm-policy` | RBAC engine; policy evaluation; deny-by-default admission |
-| Runtime | `swarm-runtime` | Async task execution; timeout; circuit breaker; retry with backoff |
-| Plugin | `swarm-plugin` | Plugin SDK (manifest, lifecycle, host, registry) |
-| Config | `swarm-config` | TOML config; env overrides; secrets abstraction |
-| Telemetry | `swarm-telemetry` | `tracing` setup; atomic metrics; audit logger |
-| Interface | `swarm-cli` | `swarm` CLI binary with agent/task/plugin/demo commands |
+| Layer                | Crate(s)                                                                              | Key Concerns                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Core domain          | `swarm-core`                                                                          | Agent/Task/Policy/RBAC types; error model; event types                                              |
+| Control plane        | `swarm-orchestrator`                                                                  | Agent registry; task queue; capability-based scheduling; supervision trees                          |
+| Policy               | `swarm-policy`                                                                        | RBAC engine; policy evaluation; deny-by-default admission                                           |
+| Runtime              | `swarm-runtime`                                                                       | Async task execution; timeout; circuit breaker; retry with backoff; execution-time context assembly |
+| Plugin               | `swarm-plugin`                                                                        | Plugin SDK (manifest, lifecycle, host, registry)                                                    |
+| Cognition / provider | `swarm-role`, `swarm-personality`, `swarm-memory`, `swarm-learning`, `swarm-provider` | Role resolution; personality overlays; memory governance; learning capture; provider routing        |
+| Config               | `swarm-config`                                                                        | TOML config; env overrides; secrets abstraction                                                     |
+| Telemetry            | `swarm-telemetry`                                                                     | `tracing` setup; atomic metrics; audit logger                                                       |
+| Interface            | `swarm-cli`                                                                           | `swarm` CLI binary with agent/task/plugin/demo commands                                             |
 
 ---
 
@@ -56,7 +61,7 @@ analysis, content generation, customer support, finance operations, and more.
 
 Agents are organized in a three-tier hierarchy:
 
-```
+```text
 Executive (AgentKind::Executive)
   └── Manager (AgentKind::Manager)
         ├── Worker A (AgentKind::Worker)
@@ -75,7 +80,7 @@ Failure escalation follows the supervision tree upward. The
 
 ## Task Lifecycle
 
-```
+```text
 Pending ──► Scheduled ──► Running ──► Completed
                                    └──► Failed
                                    └──► TimedOut
@@ -117,7 +122,8 @@ Built-in policies: `AllowAllPolicy`, `DenyAllPolicy`, `ActionAllowlistPolicy`.
 Plugins implement the `Plugin` trait and declare themselves via `PluginManifest`.
 
 **Plugin lifecycle:**
-```
+
+```text
 Discovered → Loading → Active → Unloading → Unloaded
                     └──────────► Failed
 ```
@@ -136,7 +142,8 @@ feature, enabled by default).
 ### Distribution format
 
 A WASM plugin is a pair of files:
-```
+
+```text
 plugins/my-plugin/
 ├── plugin.toml      # manifest (metadata + permissions)
 └── my-plugin.wasm   # precompiled WebAssembly binary
@@ -170,29 +177,30 @@ description = "Performs a useful operation"
 
 ### WASM sandbox permissions (`WasmPermission`)
 
-| Kind | Example value | Description |
-|------|---------------|-------------|
-| `Network` | `"api.example.com:443"` | Outbound network access |
-| `EnvVar` | `"MY_API_KEY"` | Read an environment variable |
-| `FileRead` | `"/etc/ssl/certs"` | Read from a filesystem path |
-| `FileWrite` | `"/tmp/plugin-cache"` | Write to a filesystem path |
-| `Custom` | `"my-special-permission"` | Arbitrary named capability |
+| Kind        | Example value             | Description                  |
+| ----------- | ------------------------- | ---------------------------- |
+| `Network`   | `"api.example.com:443"`   | Outbound network access      |
+| `EnvVar`    | `"MY_API_KEY"`            | Read an environment variable |
+| `FileRead`  | `"/etc/ssl/certs"`        | Read from a filesystem path  |
+| `FileWrite` | `"/tmp/plugin-cache"`     | Write to a filesystem path   |
+| `Custom`    | `"my-special-permission"` | Arbitrary named capability   |
 
 ### WASM ABI
 
 The compiled `.wasm` module must export:
 
-| Export | Signature | Semantics |
-|--------|-----------|-----------|
-| `memory` | memory | Linear memory (default export) |
-| `swarm_alloc` | `(i32) → i32` | Allocate bytes; returns pointer |
-| `swarm_dealloc` | `(i32, i32)` | Free bytes at pointer |
-| `swarm_on_load` | `() → i32` | `0` = success |
-| `swarm_on_unload` | `() → i32` | `0` = success |
-| `swarm_health_check` | `() → i32` | `0` = healthy |
-| `swarm_invoke` | `(i32, i32, i32, i32, i32, i32) → i32` | See below |
+| Export               | Signature                              | Semantics                       |
+| -------------------- | -------------------------------------- | ------------------------------- |
+| `memory`             | memory                                 | Linear memory (default export)  |
+| `swarm_alloc`        | `(i32) → i32`                          | Allocate bytes; returns pointer |
+| `swarm_dealloc`      | `(i32, i32)`                           | Free bytes at pointer           |
+| `swarm_on_load`      | `() → i32`                             | `0` = success                   |
+| `swarm_on_unload`    | `() → i32`                             | `0` = success                   |
+| `swarm_health_check` | `() → i32`                             | `0` = healthy                   |
+| `swarm_invoke`       | `(i32, i32, i32, i32, i32, i32) → i32` | See below                       |
 
 `swarm_invoke(action_ptr, action_len, params_ptr, params_len, result_ptr, result_cap)`:
+
 - Returns `n ≥ 0`: success — `n` bytes of JSON at `result_ptr`.
 - Returns `n < 0`: error — `(-n)` bytes of error message at `result_ptr`.
 
@@ -216,13 +224,37 @@ written in Rust (targeting `wasm32-unknown-unknown`).
 
 ## Fault Tolerance
 
+## Runtime context assembly
+
+The current baseline keeps provider invocation inside agents or plugins, but it
+now gives the runtime a real integration seam for governance and cognition.
+
+At task execution time, `swarm-runtime` can now:
+
+1. enforce an execution-time policy check,
+2. resolve a role from `swarm-role`,
+3. derive and apply a personality overlay,
+4. retrieve memory context from `swarm-memory`,
+5. persist episodic execution memories,
+6. record learning outputs in `swarm-learning`,
+7. annotate the task with a selected provider from `swarm-provider`.
+
+These enrichments are attached through `TaskExecutionContext` and surfaced to
+agents via task metadata, which preserves the stability of the `Agent` trait
+while materially reducing integration drift between the crates.
+
+---
+
 ### Circuit Breaker
+
 `CircuitBreaker` protects agent calls from cascade failures:
+
 - Opens after `failure_threshold` consecutive failures.
 - Transitions to `HalfOpen` after `open_duration_secs`.
 - Closes on a successful probe.
 
 ### Retry Executor
+
 `RetryExecutor` applies `RetryPolicy` (fixed or exponential backoff with
 optional jitter) to transient failures. Non-retryable errors (policy
 violations, etc.) bypass retry immediately.
@@ -231,7 +263,7 @@ violations, etc.) bypass retry immediately.
 
 ## RBAC Model
 
-```
+```text
 Subject (agent / user / service-account / plugin)
   ├── assigned Role(s)
   │     └── Permission(s) { verb: "create", resource: "task" }
@@ -244,16 +276,16 @@ Built-in roles: `admin`, `task-executor`, `task-submitter`, `observer`.
 
 ## Security Architecture
 
-| Concern | Mechanism |
-|---------|-----------|
-| Least privilege | Deny-by-default policy engine |
-| Identity | Strongly-typed `AgentId`, `PluginId`, etc. |
-| Authorization | RBAC engine with role/permission model |
-| Secret management | `SecretsProvider` abstraction (env-based default) |
-| Audit trail | `AuditLogger` with allowed/denied entries |
-| Plugin isolation | Plugins behind `Arc<tokio::sync::Mutex<Box<dyn Plugin>>>` |
-| No unsafe code | `#![forbid(unsafe_code)]` in all workspace crates |
-| Input validation | Explicit `InvalidTaskSpec` error on malformed input |
+| Concern           | Mechanism                                                 |
+| ----------------- | --------------------------------------------------------- |
+| Least privilege   | Deny-by-default policy engine                             |
+| Identity          | Strongly-typed `AgentId`, `PluginId`, etc.                |
+| Authorization     | RBAC engine with role/permission model                    |
+| Secret management | `SecretsProvider` abstraction (env-based default)         |
+| Audit trail       | `AuditLogger` with allowed/denied entries                 |
+| Plugin isolation  | Plugins behind `Arc<tokio::sync::Mutex<Box<dyn Plugin>>>` |
+| No unsafe code    | `#![forbid(unsafe_code)]` in all workspace crates         |
+| Input validation  | Explicit `InvalidTaskSpec` error on malformed input       |
 
 ---
 
@@ -274,13 +306,13 @@ Subscribe via `OrchestratorHandle::subscribe()`.
 
 ## Future Roadmap
 
-| Milestone | Description |
-|-----------|-------------|
-| v0.2 | HTTP API surface (REST/gRPC) for remote orchestrator access |
-| v0.2 | Persistent task store (SQLite/PostgreSQL adapter) |
-| v0.3 | Multi-tenant isolation via `TenantId` namespace partitioning |
-| v0.3 | Webhook/trigger plugins (schedule, HTTP, event-driven) |
-| v0.4 | Distributed orchestrator (Raft-based consensus, multi-node) |
-| v0.4 | OpenTelemetry metrics export (Prometheus, OTLP) |
-| v0.5 | Dynamic shared-library plugin loading; WASM permission enforcement hooks |
-| v0.5 | Agent hot-restart and graceful drain |
+| Milestone | Description                                                              |
+| --------- | ------------------------------------------------------------------------ |
+| v0.2      | HTTP API surface (REST/gRPC) for remote orchestrator access              |
+| v0.2      | Persistent task store (SQLite/PostgreSQL adapter)                        |
+| v0.3      | Multi-tenant isolation via `TenantId` namespace partitioning             |
+| v0.3      | Webhook/trigger plugins (schedule, HTTP, event-driven)                   |
+| v0.4      | Distributed orchestrator (Raft-based consensus, multi-node)              |
+| v0.4      | OpenTelemetry metrics export (Prometheus, OTLP)                          |
+| v0.5      | Dynamic shared-library plugin loading; WASM permission enforcement hooks |
+| v0.5      | Agent hot-restart and graceful drain                                     |

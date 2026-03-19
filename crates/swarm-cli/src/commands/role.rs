@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use clap::{Args, Subcommand};
 use swarm_config::SwarmConfig;
-use swarm_role::{loader::LoadSummary, RoleLoader, RoleRegistry, ValidationSeverity};
+use swarm_role::{
+    loader::LoadSummary, RoleLoadOptions, RoleLoader, RoleRegistry, ValidationSeverity,
+};
 
 /// Role management arguments.
 #[derive(Args)]
@@ -47,21 +49,27 @@ fn resolve_roles_dir(config: &SwarmConfig, dir: Option<String>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("roles"))
 }
 
-fn load_summary(dir: &Path) -> anyhow::Result<LoadSummary> {
+fn load_summary(dir: &Path, options: RoleLoadOptions) -> anyhow::Result<LoadSummary> {
     let registry = RoleRegistry::new();
-    RoleLoader::load_directory(dir, &registry)
+    RoleLoader::load_directory_with_options(dir, &registry, options)
         .with_context(|| format!("failed to load roles from '{}'", dir.display()))
 }
 
 fn list_roles(dir: Option<String>, config: &SwarmConfig) -> anyhow::Result<()> {
     let roles_dir = resolve_roles_dir(config, dir);
-    let summary = load_summary(&roles_dir)?;
+    let options = RoleLoadOptions {
+        treat_warnings_as_errors: config.roles.strict_validation,
+    };
+    let summary = load_summary(&roles_dir, options)?;
 
     println!("Role directory: {}", roles_dir.display());
     println!(
         "Loaded {} of {} role files ({} warnings, {} errors)",
         summary.loaded, summary.total_files, summary.warnings, summary.errors
     );
+    if options.treat_warnings_as_errors && summary.has_warnings() {
+        println!("Strict validation is enabled; files with warnings were not loaded.");
+    }
 
     for result in summary
         .results
@@ -80,7 +88,10 @@ fn list_roles(dir: Option<String>, config: &SwarmConfig) -> anyhow::Result<()> {
 
 fn validate_roles(dir: Option<String>, strict: bool, config: &SwarmConfig) -> anyhow::Result<()> {
     let roles_dir = resolve_roles_dir(config, dir);
-    let summary = load_summary(&roles_dir)?;
+    let options = RoleLoadOptions {
+        treat_warnings_as_errors: strict || config.roles.strict_validation,
+    };
+    let summary = load_summary(&roles_dir, options)?;
 
     println!("Validating roles in {}", roles_dir.display());
     println!(
@@ -107,19 +118,10 @@ fn validate_roles(dir: Option<String>, strict: bool, config: &SwarmConfig) -> an
         }
     }
 
-    let has_warnings = summary.warnings > 0;
-    let has_errors = summary.errors > 0
-        || summary.results.iter().any(|result| {
-            result
-                .issues
-                .iter()
-                .any(|issue| issue.severity == ValidationSeverity::Error)
-        });
-
-    if has_errors || (strict && has_warnings) {
+    if summary.has_blocking_issues(options) {
         anyhow::bail!(
             "role validation failed (strict={}, warnings={}, errors={})",
-            strict,
+            options.treat_warnings_as_errors,
             summary.warnings,
             summary.errors
         );

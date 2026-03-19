@@ -82,6 +82,22 @@ impl ProviderRegistry {
         self.entries.get(id).map(|e| Arc::clone(&e.provider))
     }
 
+    /// Look up a provider by its stable short name.
+    pub fn get_by_name(&self, name: &str) -> Option<Arc<dyn ModelProvider>> {
+        self.entries
+            .iter()
+            .find(|entry| entry.value().provider.name().eq_ignore_ascii_case(name))
+            .map(|entry| Arc::clone(&entry.value().provider))
+    }
+
+    /// Resolve a provider ID by its stable short name.
+    pub fn id_by_name(&self, name: &str) -> Option<PluginId> {
+        self.entries
+            .iter()
+            .find(|entry| entry.value().provider.name().eq_ignore_ascii_case(name))
+            .map(|entry| *entry.key())
+    }
+
     /// Find all providers that satisfy the given capability requirements.
     pub fn find_by_capabilities(
         &self,
@@ -122,5 +138,12 @@ mod tests {
         let reg = ProviderRegistry::new();
         assert!(reg.is_empty());
         assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn lookup_unknown_provider_name_returns_none() {
+        let reg = ProviderRegistry::new();
+        assert!(reg.get_by_name("missing").is_none());
+        assert!(reg.id_by_name("missing").is_none());
     }
 }
