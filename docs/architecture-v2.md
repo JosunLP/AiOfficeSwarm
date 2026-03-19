@@ -63,7 +63,7 @@
 
 ## 2. Updated Architecture Diagram
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │                        Interface Layer                            │
 │  swarm-cli │ API surface (future HTTP/gRPC) │ operator dashboard  │
@@ -156,7 +156,7 @@ define_id!(LearningRuleId, "Unique identifier for a learning rule.");
 
 ### Agent state model boundaries
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                    Agent Instance                         │
 │                                                           │
@@ -231,7 +231,7 @@ struct ProviderCapabilities {
 
 ### Normalization layer
 
-```
+```text
 Client code                Provider Adapter
     │                           │
     ├── ChatRequest ──────────► ├── vendor-specific request
@@ -310,7 +310,7 @@ The router maintains an ordered list of providers per capability class. On failu
 | KnowledgeRef | URI/pointer to external data | Links to documents, databases        |
 | Summary      | Compressed representation    | Distilled conversation history       |
 
-### Core traits
+### Memory core traits
 
 ```rust
 #[async_trait]
@@ -364,7 +364,7 @@ struct RetentionPolicy {
 
 ### Distinction of learning modes
 
-```
+```text
 Runtime Adaptation          → Ephemeral; within session; no persistence
 Memory Formation            → Persisted as memory entries; governed by retention
 Configuration Evolution     → Proposed changes to agent configs; requires review
@@ -372,7 +372,7 @@ Model Fine-tuning Hooks     → Data export; external process; never automatic
 Human-approved Updates      → Learning deltas queued for human review
 ```
 
-### Core traits
+### Learning core traits
 
 ```rust
 #[async_trait]
@@ -430,7 +430,7 @@ struct PersonalityProfile {
 
 Personalities are composable via layered overlays:
 
-```
+```text
 Base personality (framework default)
   └── Organization personality (tenant-defined)
         └── Role personality (per AgentKind)
@@ -593,7 +593,7 @@ Version compatibility is checked via `min_host_version` in the manifest.
 
 ## 11. Updated Workspace / Crate Layout
 
-```
+```text
 crates/
     swarm-core/           # Core domain types, traits, errors, events  (EXTENDED)
     swarm-provider/       # NEW — Provider abstraction layer
@@ -611,7 +611,7 @@ crates/
 
 ### Dependency graph (new crates)
 
-```
+```text
 swarm-core
     ↑
     ├── swarm-provider     (depends on swarm-core)

@@ -50,6 +50,83 @@ pub async fn run(args: ConfigArgs, config: &SwarmConfig) -> anyhow::Result<()> {
                 "    otlp_enabled:               {}",
                 config.telemetry.otlp_enabled
             );
+            println!("  providers:");
+            println!(
+                "    enabled:                    {}",
+                config.providers.enabled
+            );
+            println!(
+                "    require_healthy:            {}",
+                config.providers.require_healthy
+            );
+            println!(
+                "    default_provider:           {}",
+                config
+                    .providers
+                    .default_provider
+                    .as_deref()
+                    .unwrap_or("<none>")
+            );
+            println!(
+                "    default_model:              {}",
+                config
+                    .providers
+                    .default_model
+                    .as_deref()
+                    .unwrap_or("<none>")
+            );
+            println!(
+                "    routing.strategy:           {:?}",
+                config.providers.routing.strategy
+            );
+            println!(
+                "    routing.fallback_allowed:   {}",
+                config.providers.routing.fallback_allowed
+            );
+            println!("  memory:");
+            println!(
+                "    backend:                    {:?}",
+                config.memory.backend
+            );
+            println!(
+                "    auto_apply_retention:       {}",
+                config.memory.auto_apply_retention
+            );
+            println!(
+                "    redact_personal_data:       {}",
+                config.memory.redact_personal_data
+            );
+            println!(
+                "    retention_interval_secs:    {}",
+                config.memory.retention_interval_secs
+            );
+            println!("  learning:");
+            println!(
+                "    enabled:                    {}",
+                config.learning.enabled
+            );
+            println!(
+                "    require_approval_by_default:{}",
+                config.learning.require_approval_by_default
+            );
+            println!(
+                "    max_pending_outputs:        {}",
+                config.learning.max_pending_outputs
+            );
+            println!(
+                "    default_scope:              {:?}",
+                config.learning.default_scope
+            );
+            println!("  roles:");
+            println!(
+                "    roles_dir:                  {}",
+                config.roles.roles_dir.as_deref().unwrap_or("<none>")
+            );
+            println!("    auto_load:                  {}", config.roles.auto_load);
+            println!(
+                "    strict_validation:          {}",
+                config.roles.strict_validation
+            );
         }
     }
     Ok(())

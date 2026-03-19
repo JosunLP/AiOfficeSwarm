@@ -10,6 +10,8 @@
 //!   agent    Manage agents (list, register, deregister, status)
 //!   task     Manage tasks (submit, list, cancel, status)
 //!   plugin   Manage plugins (list, load, unload, invoke)
+//!   role     Inspect and validate organizational role definitions
+//!   learning Inspect learning governance defaults
 //!   config   Show effective configuration
 //!   metrics  Show runtime metrics
 //!   update   Download and install the latest released CLI binary
@@ -23,7 +25,7 @@ use clap::{Parser, Subcommand};
 
 mod commands;
 
-use commands::{agent, config_cmd, demo, metrics_cmd, plugin, task, update};
+use commands::{agent, config_cmd, demo, learning, metrics_cmd, plugin, role, task, update};
 
 /// AiOfficeSwarm — enterprise AI agent orchestration framework.
 #[derive(Parser)]
@@ -56,6 +58,10 @@ enum Commands {
     Task(task::TaskArgs),
     /// Plugin management commands.
     Plugin(plugin::PluginArgs),
+    /// Role inspection and validation commands.
+    Role(role::RoleArgs),
+    /// Learning governance inspection commands.
+    Learning(learning::LearningArgs),
     /// Show effective configuration.
     Config(config_cmd::ConfigArgs),
     /// Show runtime metrics.
@@ -94,6 +100,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Agent(args) => agent::run(args, &config).await,
         Commands::Task(args) => task::run(args, &config).await,
         Commands::Plugin(args) => plugin::run(args, &config).await,
+        Commands::Role(args) => role::run(args, &config).await,
+        Commands::Learning(args) => learning::run(args, &config).await,
         Commands::Config(args) => config_cmd::run(args, &config).await,
         Commands::Metrics(args) => metrics_cmd::run(args, &config).await,
         Commands::Update(args) => update::run(args, &config).await,

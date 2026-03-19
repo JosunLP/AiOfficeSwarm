@@ -26,8 +26,51 @@ otlp_enabled = false
 # OTLP collector endpoint (only used when otlp_enabled = true)
 # otlp_endpoint = "http://localhost:4317"
 
+[providers]
+# Enable provider-aware routing and compatibility checks.
+enabled = true
+# Exclude unhealthy providers from routing decisions.
+require_healthy = true
+# Optional provider/model defaults for agents without explicit preferences.
+# default_provider = "openai"
+# default_model = "gpt-4o-mini"
+# Explicit allow/block controls for provider governance.
+allowlist = []
+blocklist = []
+
+[providers.routing]
+# capability-match | lowest-cost | lowest-latency | round-robin
+strategy = "capability-match"
+fallback_allowed = true
+# cheapest | balanced | best-quality
+cost_preference = "balanced"
+# fastest | balanced | no-preference
+latency_preference = "balanced"
+
+[memory]
+# in-memory | plugin
+backend = "in-memory"
+auto_apply_retention = true
+redact_personal_data = true
+retention_interval_secs = 300
+
+[learning]
+enabled = false
+require_approval_by_default = true
+max_pending_outputs = 100
+# agent | team | tenant | workflow | global
+default_scope = "tenant"
+
 [plugins]
 # Directory to scan for plugin definitions (optional)
 # plugin_dir = "/etc/swarm/plugins"
 # Automatically load all plugins found in plugin_dir on startup
 auto_load = false
+
+[roles]
+# Directory containing Markdown role definitions.
+roles_dir = "roles"
+# Automatically load roles at startup.
+auto_load = true
+# When true, role warnings should be treated as deployment blockers by operators.
+strict_validation = false

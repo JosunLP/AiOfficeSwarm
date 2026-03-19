@@ -45,6 +45,7 @@ pub use request::{ChatMessage, ChatRequest, EmbeddingRequest, MessageRole};
 pub use response::{ChatResponse, EmbeddingResponse, FinishReason, ToolCall};
 pub use router::{
     CostPreference, LatencyPreference, ProviderRouter, RoutingContext, RoutingStrategy,
+    StrategyRouter,
 };
 pub use streaming::StreamEvent;
 pub use token::TokenUsage;

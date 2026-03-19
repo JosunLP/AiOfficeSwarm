@@ -16,6 +16,12 @@ pub struct SwarmConfig {
     pub orchestrator: OrchestratorConfig,
     /// Telemetry (logging and metrics) settings.
     pub telemetry: TelemetryConfig,
+    /// Provider routing and compatibility settings.
+    pub providers: ProvidersConfig,
+    /// Memory subsystem settings.
+    pub memory: MemoryConfig,
+    /// Learning governance settings.
+    pub learning: LearningConfig,
     /// Plugin loading settings.
     pub plugins: PluginsConfig,
     /// Role loading settings.
@@ -28,6 +34,9 @@ impl Default for SwarmConfig {
             instance_name: "ai-office-swarm".into(),
             orchestrator: OrchestratorConfig::default(),
             telemetry: TelemetryConfig::default(),
+            providers: ProvidersConfig::default(),
+            memory: MemoryConfig::default(),
+            learning: LearningConfig::default(),
             plugins: PluginsConfig::default(),
             roles: RolesConfig::default(),
         }
@@ -95,6 +104,184 @@ pub enum LogFormat {
     Text,
     /// Structured JSON output (suitable for log aggregators).
     Json,
+}
+
+/// Provider subsystem configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProvidersConfig {
+    /// Whether provider-based model routing is enabled.
+    pub enabled: bool,
+    /// Whether routing should exclude unhealthy providers.
+    pub require_healthy: bool,
+    /// Preferred provider ID or short name.
+    pub default_provider: Option<String>,
+    /// Preferred model identifier.
+    pub default_model: Option<String>,
+    /// Explicit provider allowlist (empty = any configured provider).
+    pub allowlist: Vec<String>,
+    /// Explicit provider deny list.
+    pub blocklist: Vec<String>,
+    /// Routing behavior for provider selection.
+    pub routing: ProviderRoutingConfig,
+}
+
+impl Default for ProvidersConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            require_healthy: true,
+            default_provider: None,
+            default_model: None,
+            allowlist: Vec::new(),
+            blocklist: Vec::new(),
+            routing: ProviderRoutingConfig::default(),
+        }
+    }
+}
+
+/// Strategy-level configuration for provider routing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProviderRoutingConfig {
+    /// Primary routing strategy to use.
+    pub strategy: ProviderRoutingStrategy,
+    /// Whether fallback providers may be used automatically.
+    pub fallback_allowed: bool,
+    /// Cost preference used by cost-aware strategies.
+    pub cost_preference: RoutingCostPreference,
+    /// Latency preference used by latency-aware strategies.
+    pub latency_preference: RoutingLatencyPreference,
+}
+
+impl Default for ProviderRoutingConfig {
+    fn default() -> Self {
+        Self {
+            strategy: ProviderRoutingStrategy::default(),
+            fallback_allowed: true,
+            cost_preference: RoutingCostPreference::default(),
+            latency_preference: RoutingLatencyPreference::default(),
+        }
+    }
+}
+
+/// Supported provider routing strategies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderRoutingStrategy {
+    /// Select the first provider that satisfies capability requirements.
+    #[default]
+    CapabilityMatch,
+    /// Select the provider with the lowest configured cost score.
+    LowestCost,
+    /// Select the provider with the lowest configured latency score.
+    LowestLatency,
+    /// Distribute requests across matching providers in round-robin order.
+    RoundRobin,
+}
+
+/// Cost preference used by the provider router.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RoutingCostPreference {
+    /// Prefer the cheapest provider.
+    Cheapest,
+    /// Balance quality and cost.
+    #[default]
+    Balanced,
+    /// Prefer quality even at higher cost.
+    BestQuality,
+}
+
+/// Latency preference used by the provider router.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RoutingLatencyPreference {
+    /// Prefer the fastest provider.
+    Fastest,
+    /// Balance latency and quality.
+    #[default]
+    Balanced,
+    /// Do not optimize for latency.
+    NoPreference,
+}
+
+/// Memory subsystem configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryConfig {
+    /// Backend implementation to use.
+    pub backend: MemoryBackendKind,
+    /// Whether retention policies should be enforced automatically.
+    pub auto_apply_retention: bool,
+    /// Whether known sensitive fields should be redacted before persistence.
+    pub redact_personal_data: bool,
+    /// Interval for retention sweeps in seconds.
+    pub retention_interval_secs: u64,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            backend: MemoryBackendKind::default(),
+            auto_apply_retention: true,
+            redact_personal_data: true,
+            retention_interval_secs: 300,
+        }
+    }
+}
+
+/// Supported memory backend kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum MemoryBackendKind {
+    /// Built-in in-memory backend.
+    #[default]
+    InMemory,
+    /// Plugin-provided backend implementation.
+    Plugin,
+}
+
+/// Learning subsystem configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LearningConfig {
+    /// Whether learning is enabled at all.
+    pub enabled: bool,
+    /// Whether new outputs require approval unless a narrower policy overrides it.
+    pub require_approval_by_default: bool,
+    /// Maximum number of pending outputs before learning should pause.
+    pub max_pending_outputs: u64,
+    /// Default scope used for operator-facing governance and approval queues.
+    pub default_scope: LearningScopeKind,
+}
+
+impl Default for LearningConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            require_approval_by_default: true,
+            max_pending_outputs: 100,
+            default_scope: LearningScopeKind::default(),
+        }
+    }
+}
+
+/// Canonical learning scope labels for configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum LearningScopeKind {
+    /// Agent-local learning.
+    Agent,
+    /// Team-level learning.
+    Team,
+    /// Tenant-level learning.
+    #[default]
+    Tenant,
+    /// Workflow-specific learning.
+    Workflow,
+    /// Global learning.
+    Global,
 }
 
 /// Plugin subsystem configuration.

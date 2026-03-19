@@ -16,6 +16,9 @@ platforms).
 - **Priority-based task scheduling** — capability-matching, least-loaded dispatch
 - **Policy engine** — deny-by-default RBAC and allow/deny policy primitives for embedding applications
 - **Plugin SDK** — first-class plugin system with lifecycle management
+- **Role-aware operations** — first-class role loading and validation from the `roles/` directory
+- **Provider-aware configuration** — routing defaults, allow/block controls, and compatibility posture
+- **Memory and learning governance** — configurable retention, redaction, approval, and scope defaults
 - **Fault tolerance** — circuit breakers, configurable retry with exponential backoff
 - **Observability** — structured tracing, metrics counters, audit logger
 - **Configuration** — TOML files + environment variable overrides
@@ -38,6 +41,12 @@ cargo run -p basic_swarm --bin basic_swarm
 # Show effective configuration
 cargo run -p swarm-cli --bin swarm -- config
 
+# Inspect configured learning governance
+cargo run -p swarm-cli --bin swarm -- learning inspect
+
+# Validate role definitions
+cargo run -p swarm-cli --bin swarm -- role validate
+
 # Run all tests
 cargo test --workspace
 ```
@@ -56,7 +65,7 @@ version.
 Published installer binaries currently cover Linux x86_64 as well as macOS on
 Intel and Apple Silicon systems.
 
-**Quick start (latest version)**
+#### Linux / macOS quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.sh -o install-swarm.sh
@@ -67,7 +76,7 @@ rm install-swarm.sh
 Installs `swarm` to `~/.local/bin` by default.
 Use `SWARM_INSTALL_DIR=/my/path` to override the destination directory.
 
-**Install a specific version**
+#### Linux / macOS pinned install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/vX.Y.Z/scripts/install.sh -o install-swarm.sh
@@ -79,7 +88,7 @@ rm install-swarm.sh
 
 Published installer binaries currently cover Windows x86_64.
 
-**Quick start (latest version)**
+#### Windows quick start
 
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/main/scripts/install.ps1 -OutFile install-swarm.ps1
@@ -89,7 +98,7 @@ Remove-Item .\install-swarm.ps1
 
 Installs `swarm.exe` to `%LOCALAPPDATA%\AiOfficeSwarm\bin` by default.
 
-**Install a specific version**
+#### Windows pinned install
 
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/JosunLP/AiOfficeSwarm/vX.Y.Z/scripts/install.ps1 -OutFile install-swarm.ps1
@@ -152,6 +161,11 @@ AiOfficeSwarm/
 │   ├── swarm-config/            # TOML config, env overrides, secrets abstraction
 │   ├── swarm-telemetry/         # Tracing setup, metrics, audit logger
 │   ├── swarm-runtime/           # Task runner, circuit breaker, retry executor
+│   ├── swarm-provider/          # Provider registry, routing, compatibility data
+│   ├── swarm-personality/       # Personality profiles and boundaries
+│   ├── swarm-memory/            # Memory scopes, retention, and redaction
+│   ├── swarm-learning/          # Learning outputs, stores, and governance
+│   ├── swarm-role/              # Role loader, validator, and policy bindings
 │   └── swarm-cli/               # `swarm` CLI binary
 ├── plugins/
 │   └── example-integration/     # Example plugin: NotificationPlugin
@@ -170,16 +184,30 @@ See [docs/architecture.md](docs/architecture.md) for a full description.
 
 The framework is layered:
 
-| Layer         | Crate                | Responsibility                     |
-| ------------- | -------------------- | ---------------------------------- |
-| Core domain   | `swarm-core`         | Types, traits, error model         |
-| Control plane | `swarm-orchestrator` | Registry, scheduling, supervision  |
-| Policy        | `swarm-policy`       | RBAC, admission, policy evaluation |
-| Runtime       | `swarm-runtime`      | Execution, retry, circuit breaker  |
-| Plugin        | `swarm-plugin`       | Plugin SDK and host                |
-| Config        | `swarm-config`       | Configuration, secrets             |
-| Telemetry     | `swarm-telemetry`    | Tracing, metrics, audit            |
-| Interface     | `swarm-cli`          | CLI management interface           |
+| Layer         | Crate                                                   | Responsibility                           |
+| ------------- | ------------------------------------------------------- | ---------------------------------------- |
+| Core domain   | `swarm-core`                                            | Types, traits, error model               |
+| Control plane | `swarm-orchestrator`                                    | Registry, scheduling, supervision        |
+| Policy        | `swarm-policy`                                          | RBAC, admission, policy evaluation       |
+| Runtime       | `swarm-runtime`                                         | Execution, retry, circuit breaker        |
+| Plugin        | `swarm-plugin`                                          | Plugin SDK and host                      |
+| Config        | `swarm-config`                                          | Configuration, secrets                   |
+| Telemetry     | `swarm-telemetry`                                       | Tracing, metrics, audit                  |
+| Cognition     | `swarm-memory` / `swarm-learning` / `swarm-personality` | Stateful agent context and governance    |
+| Provider      | `swarm-provider`                                        | Provider registry and routing            |
+| Role          | `swarm-role`                                            | Role loading, validation, policy binding |
+| Interface     | `swarm-cli`                                             | CLI management interface                 |
+
+---
+
+## Operator commands
+
+The CLI now exposes lightweight inspection commands for key enterprise concepts:
+
+- `swarm role list` — enumerate loadable role definitions.
+- `swarm role validate` — validate role files and print diagnostics.
+- `swarm learning inspect` — show the effective learning governance baseline.
+- `swarm config --format json` — inspect the full effective configuration, including provider, memory, learning, plugin, and role settings.
 
 ---
 

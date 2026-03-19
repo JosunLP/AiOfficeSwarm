@@ -20,6 +20,8 @@ swarm-plugin = { workspace = true }
 swarm-config = { workspace = true }
 swarm-telemetry = { workspace = true }
 swarm-runtime = { workspace = true }
+swarm-role = { workspace = true }
+swarm-learning = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 clap = { workspace = true }
