@@ -10,10 +10,10 @@ event_channel_capacity = 1024
 # Maximum tasks to dispatch per scheduling tick.
 max_dispatch_per_tick = 16
 # Default task timeout in seconds (0 = no timeout).
-# Reserved for future runtime enforcement when a task leaves timeout = None.
-# Note: TaskSpec::new currently sets a 300-second timeout explicitly.
+# Applied when a submitted task leaves timeout = None.
+# Note: TaskSpec::new still sets a 300-second timeout explicitly.
 default_task_timeout_secs = 300
-# Maximum concurrent tasks across all agents.
+# Maximum scheduled/running tasks across all agents.
 max_concurrent_tasks = 256
 
 [telemetry]

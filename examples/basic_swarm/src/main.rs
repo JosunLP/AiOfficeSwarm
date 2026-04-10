@@ -45,6 +45,9 @@ fn orchestrator_config_from_swarm(
     swarm_orchestrator::OrchestratorConfig {
         event_channel_capacity: config.event_channel_capacity,
         max_dispatch_per_tick: config.max_dispatch_per_tick,
+        default_task_timeout: (config.default_task_timeout_secs != 0)
+            .then(|| std::time::Duration::from_secs(config.default_task_timeout_secs)),
+        max_concurrent_tasks: config.max_concurrent_tasks,
     }
 }
 
@@ -493,7 +496,8 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::summarize_values;
+    use super::{orchestrator_config_from_swarm, summarize_values};
+    use swarm_config::SwarmConfig;
 
     #[test]
     fn summarize_values_returns_nullish_bounds_for_empty_input() {
@@ -513,5 +517,24 @@ mod tests {
         assert!((mean - (7.0 / 3.0)).abs() < 1e-12);
         assert_eq!(max, Some(4.0));
         assert_eq!(min, Some(1.0));
+    }
+
+    #[test]
+    fn example_uses_loaded_orchestrator_config() {
+        let mut config = SwarmConfig::default();
+        config.orchestrator.event_channel_capacity = 8;
+        config.orchestrator.max_dispatch_per_tick = 2;
+        config.orchestrator.default_task_timeout_secs = 12;
+        config.orchestrator.max_concurrent_tasks = 5;
+
+        let orchestrator_config = orchestrator_config_from_swarm(&config.orchestrator);
+
+        assert_eq!(orchestrator_config.event_channel_capacity, 8);
+        assert_eq!(orchestrator_config.max_dispatch_per_tick, 2);
+        assert_eq!(
+            orchestrator_config.default_task_timeout,
+            Some(std::time::Duration::from_secs(12))
+        );
+        assert_eq!(orchestrator_config.max_concurrent_tasks, 5);
     }
 }
