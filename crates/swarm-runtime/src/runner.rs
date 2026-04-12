@@ -1273,9 +1273,12 @@ mod tests {
             .unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].status, LearningStatus::PendingApproval);
-        assert_eq!(pending[0].scope, LearningScope::Team {
-            team_id: "support-ops".into(),
-        });
+        assert_eq!(
+            pending[0].scope,
+            LearningScope::Team {
+                team_id: "support-ops".into(),
+            }
+        );
     }
 
     #[tokio::test]
