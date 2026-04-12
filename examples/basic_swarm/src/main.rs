@@ -16,12 +16,12 @@ use async_trait::async_trait;
 use serde_json::json;
 use tracing::info;
 
-use swarm_config::ConfigLoader;
 use swarm_config::model::{
     ProviderRoutingStrategy as ConfigProviderRoutingStrategy,
     RoutingCostPreference as ConfigRoutingCostPreference,
     RoutingLatencyPreference as ConfigRoutingLatencyPreference,
 };
+use swarm_config::ConfigLoader;
 use swarm_core::{
     agent::{Agent, AgentDescriptor, AgentKind},
     capability::{Capability, CapabilitySet},
@@ -79,9 +79,7 @@ fn cost_preference_from_config(preference: ConfigRoutingCostPreference) -> CostP
     }
 }
 
-fn latency_preference_from_config(
-    preference: ConfigRoutingLatencyPreference,
-) -> LatencyPreference {
+fn latency_preference_from_config(preference: ConfigRoutingLatencyPreference) -> LatencyPreference {
     match preference {
         ConfigRoutingLatencyPreference::Fastest => LatencyPreference::Fastest,
         ConfigRoutingLatencyPreference::Balanced => LatencyPreference::Balanced,

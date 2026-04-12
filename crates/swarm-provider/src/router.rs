@@ -210,14 +210,12 @@ fn compare_numeric_hint(
     descending: bool,
 ) -> Ordering {
     match (numeric_hint(a, key), numeric_hint(b, key)) {
-        (Some(a_score), Some(b_score)) => {
-            if descending {
-                b_score.partial_cmp(&a_score)
-            } else {
-                a_score.partial_cmp(&b_score)
-            }
-            .unwrap_or(Ordering::Equal)
+        (Some(a_score), Some(b_score)) => if descending {
+            b_score.partial_cmp(&a_score)
+        } else {
+            a_score.partial_cmp(&b_score)
         }
+        .unwrap_or(Ordering::Equal),
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
         (None, None) => Ordering::Equal,
@@ -241,7 +239,9 @@ fn sort_capability_match_candidates(
                 CostPreference::Balanced => Ordering::Equal,
             })
             .then_with(|| match ctx.latency_preference {
-                LatencyPreference::Fastest => compare_numeric_hint(a, b, "observed_latency_ms", false),
+                LatencyPreference::Fastest => {
+                    compare_numeric_hint(a, b, "observed_latency_ms", false)
+                }
                 LatencyPreference::Balanced | LatencyPreference::NoPreference => Ordering::Equal,
             })
             .then_with(|| a.name().cmp(b.name()))
@@ -287,9 +287,9 @@ fn provider_meets_compliance(
         return false;
     }
 
-    requirements.iter().all(|requirement| {
-        supported.contains(&requirement.standard.trim().to_ascii_lowercase())
-    })
+    requirements
+        .iter()
+        .all(|requirement| supported.contains(&requirement.standard.trim().to_ascii_lowercase()))
 }
 
 fn provider_matches_data_locality(
@@ -875,7 +875,10 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, SwarmError::ComplianceBoundaryViolation { .. }));
+        assert!(matches!(
+            err,
+            SwarmError::ComplianceBoundaryViolation { .. }
+        ));
     }
 
     #[tokio::test]
