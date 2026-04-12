@@ -5,7 +5,7 @@
 
 use chrono::Utc;
 use dashmap::DashMap;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tokio::sync::Mutex;
 
 use swarm_core::{
@@ -14,6 +14,59 @@ use swarm_core::{
 };
 
 use crate::{lifecycle::PluginState, registry::PluginRegistry, Plugin};
+
+/// Host-side permission policy applied during plugin loading.
+///
+/// By default the host remains permissive for backward compatibility. When
+/// allow-lists are configured, plugin loading fails if a manifest requests a
+/// framework or WASM permission that is not explicitly allowed.
+#[derive(Debug, Clone, Default)]
+pub struct PluginPermissionPolicy {
+    allowed_framework_permissions: Option<HashSet<String>>,
+    allowed_wasm_permissions: Option<HashSet<crate::manifest::WasmPermission>>,
+}
+
+impl PluginPermissionPolicy {
+    /// Create a permissive policy that does not restrict plugin permissions.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Restrict framework permissions to the provided allow-list.
+    pub fn with_allowed_framework_permissions<I, S>(mut self, permissions: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.allowed_framework_permissions =
+            Some(permissions.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Restrict WASM permissions to the provided allow-list.
+    pub fn with_allowed_wasm_permissions<I>(
+        mut self,
+        permissions: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = crate::manifest::WasmPermission>,
+    {
+        self.allowed_wasm_permissions = Some(permissions.into_iter().collect());
+        self
+    }
+
+    fn allows_framework_permission(&self, permission: &str) -> bool {
+        self.allowed_framework_permissions
+            .as_ref()
+            .map_or(true, |allowed| allowed.contains(permission))
+    }
+
+    fn allows_wasm_permission(&self, permission: &crate::manifest::WasmPermission) -> bool {
+        self.allowed_wasm_permissions
+            .as_ref()
+            .map_or(true, |allowed| allowed.contains(permission))
+    }
+}
 
 /// Runtime container for loaded plugins.
 ///
@@ -24,11 +77,21 @@ use crate::{lifecycle::PluginState, registry::PluginRegistry, Plugin};
 ///    invocation errors are reported to the caller but do not automatically
 ///    transition the plugin to [`PluginState::Failed`].
 /// 4. Unloading plugins gracefully.
-#[derive(Default)]
 pub struct PluginHost {
     registry: PluginRegistry,
     /// The live plugin instances (boxed trait objects).
     instances: DashMap<PluginId, Arc<Mutex<Box<dyn Plugin>>>>,
+    permission_policy: PluginPermissionPolicy,
+}
+
+impl Default for PluginHost {
+    fn default() -> Self {
+        Self {
+            registry: PluginRegistry::default(),
+            instances: DashMap::new(),
+            permission_policy: PluginPermissionPolicy::default(),
+        }
+    }
 }
 
 impl PluginHost {
@@ -52,10 +115,43 @@ impl PluginHost {
         Self::default()
     }
 
+    /// Create a plugin host with an explicit permission policy.
+    pub fn with_permission_policy(permission_policy: PluginPermissionPolicy) -> Self {
+        Self {
+            permission_policy,
+            ..Self::default()
+        }
+    }
+
+    fn validate_manifest_permissions(&self, manifest: &crate::manifest::PluginManifest) -> SwarmResult<()> {
+        for permission in &manifest.required_permissions {
+            if !self.permission_policy.allows_framework_permission(permission) {
+                return Err(SwarmError::PermissionDenied {
+                    subject: manifest.name.clone(),
+                    permission: permission.clone(),
+                    resource: "plugin_host.load".into(),
+                });
+            }
+        }
+
+        for permission in &manifest.wasm_permissions {
+            if !self.permission_policy.allows_wasm_permission(permission) {
+                return Err(SwarmError::PermissionDenied {
+                    subject: manifest.name.clone(),
+                    permission: permission.compact_string(),
+                    resource: "plugin_host.load".into(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     /// Load a plugin: register it, call `on_load`, and mark it active.
     pub async fn load(&self, mut plugin: Box<dyn Plugin>) -> SwarmResult<PluginId> {
         let manifest = plugin.manifest().clone();
         manifest.validate_for_host(env!("CARGO_PKG_VERSION"))?;
+        self.validate_manifest_permissions(&manifest)?;
         let id = manifest.id;
         let name = manifest.name.clone();
 
@@ -211,7 +307,7 @@ impl PluginHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{PluginAction, PluginCapabilityKind, PluginManifest};
+    use crate::manifest::{PluginAction, PluginCapabilityKind, PluginManifest, WasmPermission};
     use async_trait::async_trait;
 
     struct EchoPlugin {
@@ -239,6 +335,19 @@ mod tests {
                 output_schema: None,
             });
             Self { manifest }
+        }
+
+        fn with_permissions(
+            required_permissions: &[&str],
+            wasm_permissions: &[WasmPermission],
+        ) -> Self {
+            let mut plugin = Self::new();
+            plugin.manifest.required_permissions = required_permissions
+                .iter()
+                .map(|permission| (*permission).to_string())
+                .collect();
+            plugin.manifest.wasm_permissions = wasm_permissions.to_vec();
+            plugin
         }
     }
 
@@ -464,5 +573,97 @@ mod tests {
 
         assert!(matches!(error, SwarmError::ConfigInvalid { .. }));
         assert!(host.registry().all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_allows_manifest_permissions_by_default() {
+        let host = PluginHost::new();
+
+        let plugin_id = host
+            .load(Box::new(EchoPlugin::with_permissions(
+                &["read:config"],
+                &[WasmPermission::EnvVar("API_TOKEN".into())],
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            host.registry().get(&plugin_id).unwrap().state.label(),
+            "active"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_rejects_framework_permissions_outside_allowlist() {
+        let host = PluginHost::with_permission_policy(
+            PluginPermissionPolicy::new()
+                .with_allowed_framework_permissions(["read:config"]),
+        );
+
+        let error = host
+            .load(Box::new(EchoPlugin::with_permissions(
+                &["create:task"],
+                &[],
+            )))
+            .await
+            .expect_err("unexpected framework permission should be denied");
+
+        assert!(matches!(
+            error,
+            SwarmError::PermissionDenied { permission, .. } if permission == "create:task"
+        ));
+        assert!(host.registry().all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_rejects_wasm_permissions_outside_allowlist() {
+        let host = PluginHost::with_permission_policy(
+            PluginPermissionPolicy::new().with_allowed_wasm_permissions([
+                WasmPermission::EnvVar("SAFE_TOKEN".into()),
+            ]),
+        );
+
+        let error = host
+            .load(Box::new(EchoPlugin::with_permissions(
+                &[],
+                &[WasmPermission::Network("api.example.com:443".into())],
+            )))
+            .await
+            .expect_err("unexpected wasm permission should be denied");
+
+        assert!(matches!(
+            error,
+            SwarmError::PermissionDenied { permission, .. }
+                if permission == "network:api.example.com:443"
+        ));
+        assert!(host.registry().all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_accepts_permissions_inside_allowlists() {
+        let host = PluginHost::with_permission_policy(
+            PluginPermissionPolicy::new()
+                .with_allowed_framework_permissions(["read:config", "create:task"])
+                .with_allowed_wasm_permissions([
+                    WasmPermission::EnvVar("API_TOKEN".into()),
+                    WasmPermission::Network("api.example.com:443".into()),
+                ]),
+        );
+
+        let plugin_id = host
+            .load(Box::new(EchoPlugin::with_permissions(
+                &["read:config"],
+                &[
+                    WasmPermission::EnvVar("API_TOKEN".into()),
+                    WasmPermission::Network("api.example.com:443".into()),
+                ],
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            host.registry().get(&plugin_id).unwrap().state.label(),
+            "active"
+        );
     }
 }

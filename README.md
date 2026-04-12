@@ -314,8 +314,8 @@ capabilities     = ["ActionProvider"]
 required_permissions = []
 
 # OS-level sandbox permissions
-# (currently declarative metadata only; enforcement is embedding-application
-# / future-host responsibility)
+# (can be enforced by PluginHost allowlists when the embedding app configures
+# them; otherwise they remain declarative metadata)
 [[plugin.wasm_permissions]]
 kind  = "EnvVar"
 value = "MY_API_KEY"
