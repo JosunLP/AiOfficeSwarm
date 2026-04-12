@@ -6,6 +6,10 @@ use uuid::Uuid;
 
 use crate::scope::LearningScope;
 
+fn default_learning_scope() -> LearningScope {
+    LearningScope::Global
+}
+
 /// A unique identifier for a learning output / learning rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LearningRuleId(Uuid);
@@ -97,7 +101,7 @@ pub struct LearningOutput {
     /// Human-readable description of what was learned.
     pub description: String,
     /// The primary learning scope this output belongs to.
-    #[serde(default)]
+    #[serde(default = "default_learning_scope")]
     pub scope: LearningScope,
     /// The agent that this learning applies to (if agent-scoped).
     pub agent_id: Option<String>,

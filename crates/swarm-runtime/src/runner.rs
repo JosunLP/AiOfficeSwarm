@@ -777,6 +777,8 @@ impl TaskRunner {
                         .get("tenant_id")
                         .and_then(|value| value.as_str().map(ToOwned::to_owned))
                 });
+                // When no explicit runtime scope is configured, preserve the
+                // pre-existing agent/tenant behavior as the primary scope.
                 if matches!(learning_output.scope, LearningScope::Global) {
                     if let Some(tenant_id) = learning_output.tenant_id.clone() {
                         learning_output.set_scope(LearningScope::Tenant { tenant_id });

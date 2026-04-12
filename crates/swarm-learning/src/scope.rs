@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The scope at which a learning strategy operates.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LearningScope {
     /// Learning applies to a single agent.
     Agent {
@@ -26,7 +26,6 @@ pub enum LearningScope {
         workflow_id: String,
     },
     /// Global learning (framework-wide, use with extreme caution).
-    #[default]
     Global,
 }
 

@@ -20,6 +20,9 @@ fn scope_matches(output: &LearningOutput, scope: &LearningScope) -> bool {
         return true;
     }
 
+    // Backward compatibility for records written before `LearningOutput.scope`
+    // existed: legacy agent/tenant identifiers are only consulted when the
+    // stored primary scope still reads as the default global value.
     match scope {
         LearningScope::Agent { agent_id } => {
             matches!(output.scope, LearningScope::Global)
