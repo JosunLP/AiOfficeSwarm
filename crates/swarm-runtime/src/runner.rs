@@ -20,7 +20,10 @@ use swarm_core::{
     identity::AgentId,
     task::Task,
 };
-use swarm_learning::{output::LearningCategory, LearningOutput, LearningScope, LearningStore};
+use swarm_learning::{
+    output::LearningCategory, LearningContext, LearningEvent, LearningOutput, LearningScope,
+    LearningStore, LearningStrategy,
+};
 use swarm_memory::{
     entry::{MemoryEntry, MemoryScope, MemoryType, SensitivityLevel},
     MemoryBackend, MemoryQuery,
@@ -47,6 +50,7 @@ pub struct TaskExecutionContext {
     default_personality: Option<PersonalityProfile>,
     memory_backend: Option<Arc<dyn MemoryBackend>>,
     learning_store: Option<Arc<dyn LearningStore>>,
+    learning_strategies: Vec<Arc<dyn LearningStrategy>>,
     provider_registry: Option<Arc<ProviderRegistry>>,
     provider_routing_strategy: RoutingStrategy,
     learning_scope: Option<LearningScope>,
@@ -98,6 +102,12 @@ impl TaskExecutionContext {
         self
     }
 
+    /// Attach a learning strategy for structured post-execution observations.
+    pub fn with_learning_strategy(mut self, strategy: Arc<dyn LearningStrategy>) -> Self {
+        self.learning_strategies.push(strategy);
+        self
+    }
+
     /// Attach a provider registry for capability-aware routing hints.
     pub fn with_provider_registry(mut self, registry: Arc<ProviderRegistry>) -> Self {
         self.provider_registry = Some(registry);
@@ -114,6 +124,36 @@ impl TaskExecutionContext {
     pub fn with_learning_scope(mut self, scope: LearningScope) -> Self {
         self.learning_scope = Some(scope);
         self
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TaskExecutionSnapshot {
+    task_id: swarm_core::identity::TaskId,
+    task_name: String,
+    input: serde_json::Value,
+    metadata: serde_json::Value,
+    required_capabilities: Vec<String>,
+}
+
+impl TaskExecutionSnapshot {
+    fn from_task(task: &Task) -> Self {
+        let mut required_capabilities = task
+            .spec
+            .required_capabilities
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        required_capabilities.sort();
+
+        Self {
+            task_id: task.id,
+            task_name: task.spec.name.clone(),
+            input: task.spec.input.clone(),
+            metadata: serde_json::to_value(&task.spec.metadata.0)
+                .unwrap_or(serde_json::Value::Null),
+            required_capabilities,
+        }
     }
 }
 
@@ -179,6 +219,7 @@ impl TaskRunner {
                 return Err(error);
             }
         };
+        let snapshot = TaskExecutionSnapshot::from_task(&task);
 
         // Tell the orchestrator execution is starting.
         // If this fails (e.g., wrong assigned agent), record the task as
@@ -200,10 +241,13 @@ impl TaskRunner {
 
         match self.effective_timeout(&task) {
             Some(timeout) => {
-                self.execute_with_timeout(task_id, agent_id, task, timeout)
+                self.execute_with_timeout(task_id, agent_id, task, snapshot, timeout)
                     .await
             }
-            None => self.execute_without_timeout(task_id, agent_id, task).await,
+            None => {
+                self.execute_without_timeout(task_id, agent_id, task, snapshot)
+                    .await
+            }
         }
     }
 
@@ -212,10 +256,11 @@ impl TaskRunner {
         task_id: swarm_core::identity::TaskId,
         agent_id: AgentId,
         task: Task,
+        snapshot: TaskExecutionSnapshot,
         timeout: std::time::Duration,
     ) -> SwarmResult<serde_json::Value> {
         match tokio::time::timeout(timeout, self.agent.execute(task)).await {
-            Ok(result) => self.finish_execution(task_id, agent_id, result).await,
+            Ok(result) => self.finish_execution(agent_id, snapshot, result).await,
             Err(_elapsed) => {
                 self.circuit_breaker.record_failure();
                 self.handle.record_task_timed_out(task_id, agent_id)?;
@@ -229,12 +274,12 @@ impl TaskRunner {
 
     async fn execute_without_timeout(
         &mut self,
-        task_id: swarm_core::identity::TaskId,
         agent_id: AgentId,
         task: Task,
+        snapshot: TaskExecutionSnapshot,
     ) -> SwarmResult<serde_json::Value> {
         let result = self.agent.execute(task).await;
-        self.finish_execution(task_id, agent_id, result).await
+        self.finish_execution(agent_id, snapshot, result).await
     }
 
     fn effective_timeout(&self, task: &Task) -> Option<std::time::Duration> {
@@ -249,25 +294,29 @@ impl TaskRunner {
 
     async fn finish_execution(
         &mut self,
-        task_id: swarm_core::identity::TaskId,
         agent_id: AgentId,
+        snapshot: TaskExecutionSnapshot,
         result: SwarmResult<serde_json::Value>,
     ) -> SwarmResult<serde_json::Value> {
         match result {
             Ok(output) => {
                 self.circuit_breaker.record_success();
                 self.handle
-                    .record_task_completed(task_id, agent_id, output.clone())?;
-                self.persist_post_execution_artifacts(task_id, &output, None)
+                    .record_task_completed(snapshot.task_id, agent_id, output.clone())?;
+                self.persist_post_execution_artifacts(&snapshot, &output, None)
                     .await?;
                 Ok(output)
             }
             Err(e) => {
                 self.circuit_breaker.record_failure();
                 self.handle
-                    .record_task_failed(task_id, agent_id, e.to_string())?;
-                self.persist_post_execution_artifacts(task_id, &serde_json::Value::Null, Some(&e))
-                    .await?;
+                    .record_task_failed(snapshot.task_id, agent_id, e.to_string())?;
+                self.persist_post_execution_artifacts(
+                    &snapshot,
+                    &serde_json::Value::Null,
+                    Some(&e),
+                )
+                .await?;
                 Err(e)
             }
         }
@@ -695,20 +744,20 @@ impl TaskRunner {
 
     async fn persist_post_execution_artifacts(
         &self,
-        task_id: swarm_core::identity::TaskId,
+        snapshot: &TaskExecutionSnapshot,
         output: &serde_json::Value,
         error: Option<&SwarmError>,
     ) -> SwarmResult<()> {
         let role_spec = self.resolve_role_spec();
         if let Some(memory_backend) = self.execution_context.memory_backend.as_ref() {
-            let scopes = self.writable_memory_scopes(task_id, role_spec.as_ref());
+            let scopes = self.writable_memory_scopes(snapshot.task_id, role_spec.as_ref());
             for scope in scopes {
                 let mut entry = MemoryEntry::new(
                     scope.clone(),
                     MemoryType::Episodic,
                     serde_json::json!({
-                        "task_id": task_id.to_string(),
-                        "task_name": self.agent.descriptor().name,
+                        "task_id": snapshot.task_id.to_string(),
+                        "task_name": snapshot.task_name,
                         "status": if error.is_some() { "failed" } else { "completed" },
                         "output": output,
                         "error": error.map(ToString::to_string),
@@ -738,12 +787,13 @@ impl TaskRunner {
                     LearningCategory::PatternExtraction
                 };
 
-                let mut learning_output = if requires_approval {
+                let baseline_output = if requires_approval {
                     LearningOutput::requires_review(
                         category.clone(),
-                        format!("Execution outcome for task {task_id}"),
+                        format!("Execution outcome for task {}", snapshot.task_id),
                         serde_json::json!({
-                            "task_id": task_id.to_string(),
+                            "task_id": snapshot.task_id.to_string(),
+                            "task_name": snapshot.task_name,
                             "status": if error.is_some() { "failed" } else { "completed" },
                         }),
                         serde_json::json!({
@@ -760,42 +810,172 @@ impl TaskRunner {
                 } else {
                     LearningOutput::auto(
                         category.clone(),
-                        format!("Execution outcome for task {task_id}"),
+                        format!("Execution outcome for task {}", snapshot.task_id),
                         serde_json::json!({
-                            "task_id": task_id.to_string(),
+                            "task_id": snapshot.task_id.to_string(),
+                            "task_name": snapshot.task_name,
                             "status": if error.is_some() { "failed" } else { "completed" },
                         }),
                     )
                 };
-                if let Some(scope) = self.execution_context.learning_scope.clone() {
-                    learning_output.set_scope(scope);
-                }
-                learning_output.agent_id = Some(descriptor.id.to_string());
-                learning_output.tenant_id = role_spec.as_ref().and_then(|spec| {
-                    spec.metadata
-                        .custom
-                        .get("tenant_id")
-                        .and_then(|value| value.as_str().map(ToOwned::to_owned))
-                });
-                // When no explicit runtime scope is configured, preserve the
-                // pre-existing agent/tenant behavior as the primary scope.
-                if matches!(learning_output.scope, LearningScope::Global) {
-                    if let Some(tenant_id) = learning_output.tenant_id.clone() {
-                        learning_output.set_scope(LearningScope::Tenant { tenant_id });
-                    } else if let Some(agent_id) = learning_output.agent_id.clone() {
-                        learning_output.set_scope(LearningScope::Agent { agent_id });
+                self.record_learning_output(learning_store, role_spec.as_ref(), baseline_output)
+                    .await?;
+
+                if !self.execution_context.learning_strategies.is_empty() {
+                    let event = self.learning_event(snapshot, output, error, role_spec.as_ref());
+                    let context = self.learning_context(role_spec.as_ref());
+                    for strategy in &self.execution_context.learning_strategies {
+                        let strategy_requires_approval =
+                            context.require_approval || strategy.always_requires_approval();
+                        for learned_output in strategy.observe(&event, &context).await? {
+                            if !self.learning_category_allowed(
+                                &descriptor.learning_policy,
+                                &learned_output,
+                            ) {
+                                continue;
+                            }
+                            let learned_output = self.normalized_learning_output(
+                                role_spec.as_ref(),
+                                learned_output,
+                                strategy_requires_approval,
+                            );
+                            learning_store.record(learned_output.clone()).await?;
+                            self.handle
+                                .publish_event(EventKind::LearningOutputProduced {
+                                    category: learning_category_label(&learned_output.category)
+                                        .into(),
+                                    requires_approval: learned_output.requires_approval,
+                                });
+                        }
                     }
                 }
-                learning_store.record(learning_output.clone()).await?;
-                self.handle
-                    .publish_event(EventKind::LearningOutputProduced {
-                        category: learning_category_label(&learning_output.category).into(),
-                        requires_approval,
-                    });
             }
         }
 
         Ok(())
+    }
+
+    fn learning_context(&self, role_spec: Option<&RoleSpec>) -> LearningContext {
+        LearningContext {
+            scope: self
+                .execution_context
+                .learning_scope
+                .clone()
+                .unwrap_or_else(|| self.default_learning_scope(role_spec)),
+            require_approval: self.agent.descriptor().learning_policy.require_approval
+                || role_spec
+                    .map(|spec| spec.learning_policy.require_approval)
+                    .unwrap_or(false),
+            tenant_id: self.learning_tenant_id(role_spec),
+        }
+    }
+
+    fn default_learning_scope(&self, role_spec: Option<&RoleSpec>) -> LearningScope {
+        if let Some(tenant_id) = self.learning_tenant_id(role_spec) {
+            LearningScope::Tenant { tenant_id }
+        } else {
+            LearningScope::Agent {
+                agent_id: self.agent.descriptor().id.to_string(),
+            }
+        }
+    }
+
+    fn learning_tenant_id(&self, role_spec: Option<&RoleSpec>) -> Option<String> {
+        role_spec.and_then(|spec| {
+            spec.metadata
+                .custom
+                .get("tenant_id")
+                .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        })
+    }
+
+    fn learning_event(
+        &self,
+        snapshot: &TaskExecutionSnapshot,
+        output: &serde_json::Value,
+        error: Option<&SwarmError>,
+        role_spec: Option<&RoleSpec>,
+    ) -> LearningEvent {
+        LearningEvent {
+            kind: if error.is_some() {
+                swarm_learning::event::LearningEventKind::TaskFailed
+            } else {
+                swarm_learning::event::LearningEventKind::TaskCompleted
+            },
+            agent_id: self.agent.descriptor().id.to_string(),
+            task_id: Some(snapshot.task_id.to_string()),
+            tenant_id: self.learning_tenant_id(role_spec),
+            timestamp: swarm_core::types::now(),
+            payload: serde_json::json!({
+                "task_name": snapshot.task_name,
+                "input": snapshot.input,
+                "output": output,
+                "error": error.map(ToString::to_string),
+                "required_capabilities": snapshot.required_capabilities,
+                "metadata": snapshot.metadata,
+            }),
+        }
+    }
+
+    fn normalized_learning_output(
+        &self,
+        role_spec: Option<&RoleSpec>,
+        mut output: LearningOutput,
+        requires_approval: bool,
+    ) -> LearningOutput {
+        if let Some(scope) = self.execution_context.learning_scope.clone() {
+            output.set_scope(scope);
+        }
+        output
+            .agent_id
+            .get_or_insert_with(|| self.agent.descriptor().id.to_string());
+        if output.tenant_id.is_none() {
+            output.tenant_id = self.learning_tenant_id(role_spec);
+        }
+        if matches!(output.scope, LearningScope::Global) {
+            output.set_scope(self.default_learning_scope(role_spec));
+        }
+        if requires_approval {
+            output.requires_approval = true;
+            output.status = swarm_learning::LearningStatus::PendingApproval;
+            output.applied_at = None;
+        }
+        output
+    }
+
+    async fn record_learning_output(
+        &self,
+        learning_store: &Arc<dyn LearningStore>,
+        role_spec: Option<&RoleSpec>,
+        output: LearningOutput,
+    ) -> SwarmResult<()> {
+        let output = self.normalized_learning_output(
+            role_spec,
+            output,
+            self.agent.descriptor().learning_policy.require_approval
+                || role_spec
+                    .map(|spec| spec.learning_policy.require_approval)
+                    .unwrap_or(false),
+        );
+        learning_store.record(output.clone()).await?;
+        self.handle
+            .publish_event(EventKind::LearningOutputProduced {
+                category: learning_category_label(&output.category).into(),
+                requires_approval: output.requires_approval,
+            });
+        Ok(())
+    }
+
+    fn learning_category_allowed(
+        &self,
+        policy: &swarm_core::agent::LearningPolicyRef,
+        output: &LearningOutput,
+    ) -> bool {
+        policy.allowed_categories.is_empty()
+            || policy
+                .allowed_categories
+                .iter()
+                .any(|category| category == learning_category_label(&output.category))
     }
 }
 
@@ -834,7 +1014,7 @@ mod tests {
         task::TaskSpec,
         ResourceLimits,
     };
-    use swarm_learning::{store::InMemoryLearningStore, LearningStatus};
+    use swarm_learning::{store::InMemoryLearningStore, ExecutionTemplateStrategy, LearningStatus};
     use swarm_memory::{in_memory::InMemoryBackend, MemoryBackend};
     use swarm_orchestrator::Orchestrator;
     use swarm_personality::PersonalityProfile;
@@ -1245,6 +1425,7 @@ mod tests {
                 .with_role_registry(role_registry)
                 .with_memory_backend(Arc::clone(&memory_backend))
                 .with_learning_store(learning_store.clone())
+                .with_learning_strategy(Arc::new(ExecutionTemplateStrategy::new()))
                 .with_learning_scope(LearningScope::Team {
                     team_id: "support-ops".into(),
                 })
@@ -1273,14 +1454,20 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].status, LearningStatus::PendingApproval);
-        assert_eq!(
-            pending[0].scope,
-            LearningScope::Team {
-                team_id: "support-ops".into(),
-            }
-        );
+        assert_eq!(pending.len(), 2);
+        assert!(pending
+            .iter()
+            .all(|output| output.status == LearningStatus::PendingApproval));
+        assert!(pending.iter().all(|output| {
+            output.scope
+                == LearningScope::Team {
+                    team_id: "support-ops".into(),
+                }
+        }));
+        assert!(pending.iter().any(|output| {
+            output.category == LearningCategory::PlanTemplate
+                && output.delta["template_name"] == serde_json::json!("t")
+        }));
     }
 
     #[tokio::test]

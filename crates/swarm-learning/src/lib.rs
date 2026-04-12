@@ -41,4 +41,4 @@ pub use event::LearningEvent;
 pub use output::{LearningOutput, LearningResult, LearningStatus};
 pub use scope::LearningScope;
 pub use store::{FileLearningStore, InMemoryLearningStore, LearningStore};
-pub use strategy::LearningStrategy;
+pub use strategy::{ExecutionTemplateStrategy, LearningContext, LearningStrategy};

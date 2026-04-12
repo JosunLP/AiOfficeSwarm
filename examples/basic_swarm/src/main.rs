@@ -24,7 +24,10 @@ use swarm_core::{
     policy::PolicyContext,
     task::{Task, TaskPriority, TaskSpec, TaskStatus},
 };
-use swarm_learning::{FileLearningStore, LearningScope, LearningStore};
+use swarm_learning::{
+    output::LearningCategory, ExecutionTemplateStrategy, FileLearningStore, LearningScope,
+    LearningStore,
+};
 use swarm_memory::{
     in_memory::InMemoryBackend, MemoryBackend, MemoryEntry, MemoryScope, MemoryType,
 };
@@ -291,6 +294,7 @@ async fn main() -> anyhow::Result<()> {
 
     let memory_backend = Arc::new(InMemoryBackend::new());
     let learning_store = Arc::new(FileLearningStore::new(&config.learning.store_path));
+    let execution_template_strategy = Arc::new(ExecutionTemplateStrategy::new());
     let provider_registry = Arc::new(ProviderRegistry::new());
     provider_registry.register(Arc::new(DemoProvider {
         id: swarm_core::PluginId::new(),
@@ -355,6 +359,7 @@ async fn main() -> anyhow::Result<()> {
         .with_role_registry(role_registry.clone())
         .with_memory_backend(memory_backend.clone())
         .with_learning_store(learning_store.clone())
+        .with_learning_strategy(execution_template_strategy)
         .with_learning_scope(LearningScope::Global)
         .with_provider_registry(provider_registry.clone())
         .with_default_personality(PersonalityProfile::new("Enterprise Base", "1.0.0"));
@@ -489,7 +494,14 @@ async fn main() -> anyhow::Result<()> {
     let pending_learning = learning_store
         .list_pending_approvals(&LearningScope::Global)
         .await?;
+    let learned_templates = learning_store
+        .list(&LearningScope::Global)
+        .await?
+        .into_iter()
+        .filter(|output| output.category == LearningCategory::PlanTemplate)
+        .count();
     println!("  Pending learning queue: {}", pending_learning.len());
+    println!("  Learned templates:      {}", learned_templates);
 
     println!("\nAll done! ✓");
     Ok(())

@@ -47,6 +47,9 @@ pub trait LearningStore: Send + Sync {
     /// Record a new learning output.
     async fn record(&self, output: LearningOutput) -> SwarmResult<()>;
 
+    /// List all recorded outputs for the given scope.
+    async fn list(&self, scope: &LearningScope) -> SwarmResult<Vec<LearningOutput>>;
+
     /// List all outputs pending approval for the given scope.
     async fn list_pending_approvals(
         &self,
@@ -206,6 +209,18 @@ impl LearningStore for FileLearningStore {
         self.save_document(&document)
     }
 
+    async fn list(&self, scope: &LearningScope) -> SwarmResult<Vec<LearningOutput>> {
+        let _guard = self.lock.lock().await;
+        let mut outputs: Vec<_> = self
+            .load_document()?
+            .outputs
+            .into_iter()
+            .filter(|output| scope_matches(output, scope))
+            .collect();
+        outputs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        Ok(outputs)
+    }
+
     async fn list_pending_approvals(
         &self,
         scope: &LearningScope,
@@ -323,6 +338,17 @@ impl LearningStore for InMemoryLearningStore {
         Ok(())
     }
 
+    async fn list(&self, scope: &LearningScope) -> SwarmResult<Vec<LearningOutput>> {
+        let mut outputs: Vec<_> = self
+            .outputs
+            .iter()
+            .filter(|entry| scope_matches(entry.value(), scope))
+            .map(|entry| entry.value().clone())
+            .collect();
+        outputs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        Ok(outputs)
+    }
+
     async fn list_pending_approvals(
         &self,
         scope: &LearningScope,
@@ -412,6 +438,41 @@ mod tests {
         store.approve(&id).await.unwrap();
         let approved = store.get(&id).await.unwrap().unwrap();
         assert_eq!(approved.status, LearningStatus::Applied);
+    }
+
+    #[tokio::test]
+    async fn list_returns_outputs_for_matching_scope() {
+        let store = InMemoryLearningStore::new();
+
+        let mut tenant_output = LearningOutput::auto(
+            LearningCategory::PlanTemplate,
+            "Tenant template",
+            serde_json::json!({"template": true}),
+        );
+        tenant_output.set_scope(LearningScope::Tenant {
+            tenant_id: "tenant-a".into(),
+        });
+        store.record(tenant_output).await.unwrap();
+
+        let mut other_output = LearningOutput::auto(
+            LearningCategory::PreferenceAdaptation,
+            "Other scope",
+            serde_json::json!({"template": false}),
+        );
+        other_output.set_scope(LearningScope::Team {
+            team_id: "team-a".into(),
+        });
+        store.record(other_output).await.unwrap();
+
+        let listed = store
+            .list(&LearningScope::Tenant {
+                tenant_id: "tenant-a".into(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].scope.label(), "tenant");
     }
 
     #[tokio::test]

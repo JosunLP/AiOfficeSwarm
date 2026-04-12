@@ -5,7 +5,8 @@ use std::str::FromStr;
 
 use swarm_config::{model::LearningScopeKind, SwarmConfig};
 use swarm_learning::{
-    output::LearningRuleId, FileLearningStore, LearningOutput, LearningScope, LearningStore,
+    output::LearningRuleId, FileLearningStore, LearningOutput, LearningScope, LearningStatus,
+    LearningStore,
 };
 
 /// Learning management arguments.
@@ -21,6 +22,8 @@ pub struct LearningArgs {
 pub enum LearningSubcommand {
     /// Show the effective learning governance posture from configuration.
     Inspect,
+    /// List recorded learning outputs for a scope.
+    List(LearningListArgs),
     /// List pending approval items from the persistent learning queue.
     Pending(LearningPendingArgs),
     /// Show a single learning output by ID.
@@ -31,6 +34,26 @@ pub enum LearningSubcommand {
     Reject(LearningActionArgs),
     /// Roll back a previously applied learning output.
     Rollback(LearningActionArgs),
+}
+
+/// Arguments for listing learning outputs.
+#[derive(Args)]
+pub struct LearningListArgs {
+    /// Scope to inspect (agent, team, tenant, workflow, global).
+    #[arg(long)]
+    pub scope: Option<String>,
+    /// Scope identifier for non-global scopes.
+    #[arg(long)]
+    pub scope_id: Option<String>,
+    /// Optional category filter (for example `plan_template`).
+    #[arg(long)]
+    pub category: Option<String>,
+    /// Optional status filter (pending, pending_approval, applied, rejected, rolled_back).
+    #[arg(long)]
+    pub status: Option<String>,
+    /// Output format: text or json.
+    #[arg(short, long, default_value = "text")]
+    pub format: String,
 }
 
 /// Arguments for listing pending learning outputs.
@@ -145,6 +168,43 @@ fn print_learning_output_text(output: &LearningOutput) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn print_learning_output_summary(output: &LearningOutput) {
+    println!(
+        "  - {} [{}] {} {} ({})",
+        output.id,
+        output.status.label(),
+        output.category.label(),
+        output.description,
+        output.scope_label()
+    );
+}
+
+fn matches_category_filter(output: &LearningOutput, requested: Option<&str>) -> bool {
+    requested
+        .map(|category| output.category.label() == category.trim())
+        .unwrap_or(true)
+}
+
+fn parse_learning_status(label: &str) -> anyhow::Result<LearningStatus> {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "pending" => Ok(LearningStatus::Pending),
+        "pending_approval" => Ok(LearningStatus::PendingApproval),
+        "applied" => Ok(LearningStatus::Applied),
+        "rejected" => Ok(LearningStatus::Rejected),
+        "rolled_back" => Ok(LearningStatus::RolledBack),
+        other => anyhow::bail!(
+            "unsupported learning status '{other}' (expected pending, pending_approval, applied, rejected, or rolled_back)"
+        ),
+    }
+}
+
+fn matches_status_filter(output: &LearningOutput, requested: Option<&str>) -> anyhow::Result<bool> {
+    match requested {
+        Some(status) => Ok(output.status == parse_learning_status(status)?),
+        None => Ok(true),
+    }
+}
+
 pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()> {
     match args.subcommand {
         LearningSubcommand::Inspect => {
@@ -161,7 +221,37 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
             println!("  default_scope: {:?}", config.learning.default_scope);
             println!("  store_path: {}", config.learning.store_path);
             println!();
-            println!("Use `swarm learning pending`, `get`, `approve`, `reject`, and `rollback` to inspect and manage the persistent queue.");
+            println!("Use `swarm learning list`, `pending`, `get`, `approve`, `reject`, and `rollback` to inspect and manage the persistent queue.");
+        }
+        LearningSubcommand::List(args) => {
+            let scope = resolve_scope(args.scope.as_deref(), args.scope_id.as_deref(), config)?;
+            let outputs = learning_store(config)
+                .list(&scope)
+                .await?
+                .into_iter()
+                .filter(|output| matches_category_filter(output, args.category.as_deref()))
+                .filter_map(
+                    |output| match matches_status_filter(&output, args.status.as_deref()) {
+                        Ok(true) => Some(Ok(output)),
+                        Ok(false) => None,
+                        Err(error) => Some(Err(error)),
+                    },
+                )
+                .collect::<anyhow::Result<Vec<_>>>()?;
+
+            match args.format.as_str() {
+                "json" => println!("{}", serde_json::to_string_pretty(&outputs)?),
+                _ => {
+                    println!(
+                        "Learning outputs ({}, scope={})",
+                        outputs.len(),
+                        scope.label()
+                    );
+                    for output in outputs {
+                        print_learning_output_summary(&output);
+                    }
+                }
+            }
         }
         LearningSubcommand::Pending(args) => {
             let scope = resolve_scope(args.scope.as_deref(), args.scope_id.as_deref(), config)?;
@@ -177,14 +267,7 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
                         scope.label()
                     );
                     for output in pending {
-                        println!(
-                            "  - {} [{}] {} {} ({})",
-                            output.id,
-                            output.status.label(),
-                            output.category.label(),
-                            output.description,
-                            output.scope_label()
-                        );
+                        print_learning_output_summary(&output);
                     }
                 }
             }
@@ -292,5 +375,26 @@ mod tests {
         });
 
         assert_eq!(learning_scope_label(&output), "team:ops");
+    }
+
+    #[test]
+    fn matches_category_filter_compares_labels() {
+        let output = LearningOutput::auto(
+            swarm_learning::output::LearningCategory::PlanTemplate,
+            "Template",
+            serde_json::json!({}),
+        );
+
+        assert!(matches_category_filter(&output, Some("plan_template")));
+        assert!(!matches_category_filter(
+            &output,
+            Some("pattern_extraction")
+        ));
+    }
+
+    #[test]
+    fn parse_learning_status_rejects_unknown_values() {
+        let error = parse_learning_status("mystery").unwrap_err();
+        assert!(error.to_string().contains("unsupported learning status"));
     }
 }
