@@ -242,7 +242,7 @@ provider subsystems materially useful at runtime.
 Current limits remain explicit:
 
 - provider routing can now enforce health, compliance, locality, and fallback preferences but still annotates execution context rather than invoking providers directly,
-- orchestrator-level submit/schedule policy enforcement is still an embedding concern.
+- non-task operations such as plugin invocation still require embedding-level policy enforcement.
 
 The injected metadata includes keys such as:
 

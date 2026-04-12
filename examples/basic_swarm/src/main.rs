@@ -281,14 +281,17 @@ async fn main() -> anyhow::Result<()> {
     println!("║  AiOfficeSwarm — Runtime Context Demo        ║");
     println!("╚═══════════════════════════════════════════════╝\n");
 
-    let orch = Orchestrator::with_config(orchestrator_config_from_swarm(&config.orchestrator));
-    let handle = orch.handle();
-    let metrics = Metrics::new();
-
     let policy_engine = PolicyEngine::allow_by_default();
     policy_engine
         .register(Arc::new(AllowAllPolicy::new("demo-allow-all")))
         .await;
+
+    let orch = Orchestrator::with_config_and_policy_engine(
+        orchestrator_config_from_swarm(&config.orchestrator),
+        policy_engine.clone(),
+    );
+    let handle = orch.handle();
+    let metrics = Metrics::new();
 
     println!("── Loading Roles ───────────────────────────────");
     let role_registry = swarm_role::RoleRegistry::new();
@@ -420,8 +423,7 @@ async fn main() -> anyhow::Result<()> {
         c.add(Capability::new("text-processing"));
         c
     };
-    enforce_policy_check(&policy_engine, "submit_task", "task-queue").await?;
-    handle.submit_task(text_spec)?;
+    handle.submit_task(text_spec).await?;
     metrics.inc_tasks_submitted();
 
     let mut data_spec = TaskSpec::new(
@@ -433,15 +435,14 @@ async fn main() -> anyhow::Result<()> {
         c.add(Capability::new("data-analysis"));
         c
     };
-    enforce_policy_check(&policy_engine, "submit_task", "task-queue").await?;
-    handle.submit_task(data_spec)?;
+    handle.submit_task(data_spec).await?;
     metrics.inc_tasks_submitted();
 
-    enforce_policy_check(&policy_engine, "submit_task", "task-queue").await?;
     handle.submit_task(TaskSpec::new(
         "summarize-meeting-notes",
         json!({ "text": "Team standup: sprint velocity is on track, two blockers identified in the backend integration module." }),
-    ))?;
+    ))
+    .await?;
     metrics.inc_tasks_submitted();
     println!("  ✓ Submitted three demo tasks");
     println!();
@@ -452,7 +453,7 @@ async fn main() -> anyhow::Result<()> {
     let mut data_runner = TaskRunner::new(Box::new(data_agent), handle.clone())
         .with_execution_context(execution_context.clone());
 
-    if let Some(task_id) = handle.try_schedule_next()? {
+    if let Some(task_id) = handle.try_schedule_next().await? {
         let task = handle.get_task(&task_id)?;
         let output = text_runner.run_task(task).await?;
         metrics.inc_tasks_completed();
@@ -464,7 +465,7 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    if let Some(task_id) = handle.try_schedule_next()? {
+    if let Some(task_id) = handle.try_schedule_next().await? {
         let task = handle.get_task(&task_id)?;
         let output = data_runner.run_task(task).await?;
         let mean = output["mean"]
@@ -483,7 +484,7 @@ async fn main() -> anyhow::Result<()> {
 
     handle.set_agent_ready(text_runner.agent_id())?;
     handle.set_agent_ready(data_runner.agent_id())?;
-    if let Some(task_id) = handle.try_schedule_next()? {
+    if let Some(task_id) = handle.try_schedule_next().await? {
         let task = handle.get_task(&task_id)?;
         let assigned_to = match task.status {
             TaskStatus::Scheduled { assigned_to } => assigned_to,
