@@ -5,7 +5,7 @@
 //! everything together. Users interact with it via an [`OrchestratorHandle`]
 //! which exposes an async API.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 
 use swarm_core::{
@@ -30,6 +30,12 @@ pub struct OrchestratorConfig {
     pub event_channel_capacity: usize,
     /// How many dispatch iterations to run per scheduling tick.
     pub max_dispatch_per_tick: usize,
+    /// Default task timeout applied when submitted tasks leave `timeout` unset.
+    /// `None` disables the default deadline.
+    pub default_task_timeout: Option<Duration>,
+    /// Maximum number of tasks that may be scheduled or running at once across
+    /// the whole swarm.
+    pub max_concurrent_tasks: usize,
 }
 
 impl Default for OrchestratorConfig {
@@ -37,6 +43,8 @@ impl Default for OrchestratorConfig {
         Self {
             event_channel_capacity: 1024,
             max_dispatch_per_tick: 16,
+            default_task_timeout: Some(Duration::from_secs(300)),
+            max_concurrent_tasks: 256,
         }
     }
 }
@@ -50,6 +58,8 @@ struct OrchestratorState {
     supervision: SupervisionManager,
     scheduler: Scheduler,
     event_tx: broadcast::Sender<Event>,
+    default_task_timeout: Option<Duration>,
+    max_concurrent_tasks: usize,
 }
 
 impl OrchestratorState {
@@ -64,6 +74,8 @@ impl OrchestratorState {
             supervision: SupervisionManager::new(),
             scheduler,
             event_tx,
+            default_task_timeout: config.default_task_timeout,
+            max_concurrent_tasks: config.max_concurrent_tasks,
         }
     }
 
@@ -71,6 +83,18 @@ impl OrchestratorState {
         let ev = EventEnvelope::new(kind);
         // It's OK if there are no subscribers.
         let _ = self.event_tx.send(ev);
+    }
+
+    fn in_flight_task_count(&self) -> usize {
+        self.tasks
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.value().status,
+                    TaskStatus::Scheduled { .. } | TaskStatus::Running { .. }
+                )
+            })
+            .count()
     }
 }
 
@@ -178,7 +202,10 @@ impl OrchestratorHandle {
     ///
     /// The task is validated, stored, and placed in the priority queue.
     /// Returns the new task's ID.
-    pub fn submit_task(&self, spec: TaskSpec) -> SwarmResult<TaskId> {
+    pub fn submit_task(&self, mut spec: TaskSpec) -> SwarmResult<TaskId> {
+        if spec.timeout.is_none() {
+            spec.timeout = self.state.default_task_timeout;
+        }
         spec.validate()?;
         let task = Task::new(spec);
         let task_id = task.id;
@@ -197,6 +224,14 @@ impl OrchestratorHandle {
     /// Returns `Some(TaskId)` if a task was successfully scheduled, `None` if
     /// the queue is empty or no agents are available.
     pub fn try_schedule_next(&self) -> SwarmResult<Option<TaskId>> {
+        if self.state.in_flight_task_count() >= self.state.max_concurrent_tasks {
+            tracing::debug!(
+                max_concurrent_tasks = self.state.max_concurrent_tasks,
+                "global concurrency limit reached; delaying scheduling"
+            );
+            return Ok(None);
+        }
+
         let task = match self.state.task_queue.peek() {
             Some(t) => t,
             None => return Ok(None),
@@ -371,7 +406,7 @@ mod tests {
         agent::{AgentDescriptor, AgentKind},
         capability::{Capability, CapabilitySet},
         event::EventKind,
-        task::TaskSpec,
+        task::{TaskSpec, TaskStatus},
     };
 
     fn make_worker(caps: CapabilitySet) -> AgentDescriptor {
@@ -489,5 +524,92 @@ mod tests {
             handle.record_task_started(missing_task_id, agent_id),
             Err(SwarmError::TaskNotFound { id }) if id == missing_task_id
         ));
+    }
+
+    #[test]
+    fn submit_task_applies_default_timeout_when_missing() {
+        let orch = Orchestrator::with_config(OrchestratorConfig {
+            default_task_timeout: Some(Duration::from_secs(42)),
+            ..OrchestratorConfig::default()
+        });
+        let handle = orch.handle();
+        let desc = make_worker(CapabilitySet::new());
+        let agent_id = handle.register_agent(desc).unwrap();
+        handle.set_agent_ready(agent_id).unwrap();
+
+        let mut spec = TaskSpec::new("timeout-from-config", serde_json::json!({}));
+        spec.timeout = None;
+
+        let task_id = handle.submit_task(spec).unwrap();
+        let task = handle.get_task(&task_id).unwrap();
+
+        assert_eq!(task.spec.timeout, Some(Duration::from_secs(42)));
+    }
+
+    #[test]
+    fn zero_default_timeout_preserves_timeout_none() {
+        let orch = Orchestrator::with_config(OrchestratorConfig {
+            default_task_timeout: None,
+            ..OrchestratorConfig::default()
+        });
+        let handle = orch.handle();
+        let desc = make_worker(CapabilitySet::new());
+        let agent_id = handle.register_agent(desc).unwrap();
+        handle.set_agent_ready(agent_id).unwrap();
+
+        let mut spec = TaskSpec::new("no-timeout", serde_json::json!({}));
+        spec.timeout = None;
+
+        let task_id = handle.submit_task(spec).unwrap();
+        let task = handle.get_task(&task_id).unwrap();
+
+        assert_eq!(task.spec.timeout, None);
+    }
+
+    #[test]
+    fn scheduling_respects_global_concurrency_limit() {
+        let orch = Orchestrator::with_config(OrchestratorConfig {
+            max_concurrent_tasks: 1,
+            ..OrchestratorConfig::default()
+        });
+        let handle = orch.handle();
+
+        let worker_a = AgentDescriptor::new("worker-a", AgentKind::Worker, CapabilitySet::new());
+        let worker_a_id = worker_a.id;
+        let worker_b = AgentDescriptor::new("worker-b", AgentKind::Worker, CapabilitySet::new());
+        let worker_b_id = worker_b.id;
+
+        handle.register_agent(worker_a).unwrap();
+        handle.register_agent(worker_b).unwrap();
+        handle.set_agent_ready(worker_a_id).unwrap();
+        handle.set_agent_ready(worker_b_id).unwrap();
+
+        let first_task_id = handle
+            .submit_task(TaskSpec::new("first", serde_json::json!({})))
+            .unwrap();
+        let second_task_id = handle
+            .submit_task(TaskSpec::new("second", serde_json::json!({})))
+            .unwrap();
+
+        assert_eq!(handle.try_schedule_next().unwrap(), Some(first_task_id));
+        assert_eq!(handle.try_schedule_next().unwrap(), None);
+
+        let assigned_agent_id = match handle.get_task(&first_task_id).unwrap().status {
+            TaskStatus::Scheduled { assigned_to } => assigned_to,
+            status => panic!("expected scheduled task, got {}", status.label()),
+        };
+
+        handle
+            .record_task_started(first_task_id, assigned_agent_id)
+            .unwrap();
+        handle
+            .record_task_completed(
+                first_task_id,
+                assigned_agent_id,
+                serde_json::json!({"done": true}),
+            )
+            .unwrap();
+
+        assert_eq!(handle.try_schedule_next().unwrap(), Some(second_task_id));
     }
 }

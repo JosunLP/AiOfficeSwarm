@@ -1,11 +1,26 @@
 //! Persistent storage for learning outputs and their lifecycle.
 
 use async_trait::async_trait;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use tokio::sync::Mutex;
 
 use swarm_core::error::SwarmResult;
 
-use crate::output::{LearningOutput, LearningRuleId};
+use crate::output::{LearningOutput, LearningRuleId, LearningStatus};
 use crate::scope::LearningScope;
+
+fn scope_matches(output: &LearningOutput, scope: &LearningScope) -> bool {
+    match scope {
+        LearningScope::Agent { agent_id } => output.agent_id.as_deref() == Some(agent_id.as_str()),
+        LearningScope::Tenant { tenant_id } => {
+            output.tenant_id.as_deref() == Some(tenant_id.as_str())
+        }
+        LearningScope::Global => true,
+        LearningScope::Team { .. } | LearningScope::Workflow { .. } => true,
+    }
+}
 
 /// Storage backend for learning outputs and their approval lifecycle.
 ///
@@ -36,6 +51,233 @@ pub trait LearningStore: Send + Sync {
 
     /// Return the total number of recorded outputs for a scope.
     async fn count(&self, scope: &LearningScope) -> SwarmResult<u64>;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct LearningStoreDocument {
+    outputs: Vec<LearningOutput>,
+}
+
+/// JSON file-backed implementation of [`LearningStore`] for cross-process
+/// approval queue persistence.
+pub struct FileLearningStore {
+    path: PathBuf,
+    lock: Mutex<()>,
+}
+
+impl FileLearningStore {
+    /// Create a file-backed learning store rooted at the provided JSON file.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            lock: Mutex::new(()),
+        }
+    }
+
+    /// Return the configured storage path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn load_document(&self) -> SwarmResult<LearningStoreDocument> {
+        if !self.path.exists() {
+            return Ok(LearningStoreDocument::default());
+        }
+
+        let content = std::fs::read_to_string(&self.path).map_err(|error| {
+            swarm_core::error::SwarmError::Internal {
+                reason: format!(
+                    "failed to read learning store '{}': {}",
+                    self.path.display(),
+                    error
+                ),
+            }
+        })?;
+
+        if content.trim().is_empty() {
+            return Ok(LearningStoreDocument::default());
+        }
+
+        serde_json::from_str(&content).map_err(|error| swarm_core::error::SwarmError::Internal {
+            reason: format!(
+                "failed to parse learning store '{}': {}",
+                self.path.display(),
+                error
+            ),
+        })
+    }
+
+    fn save_document(&self, document: &LearningStoreDocument) -> SwarmResult<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                swarm_core::error::SwarmError::Internal {
+                    reason: format!(
+                        "failed to create learning store directory '{}': {}",
+                        parent.display(),
+                        error
+                    ),
+                }
+            })?;
+        }
+
+        let payload = serde_json::to_string_pretty(document).map_err(|error| {
+            swarm_core::error::SwarmError::Internal {
+                reason: format!("failed to serialise learning store: {}", error),
+            }
+        })?;
+        let temp_path = temporary_store_path(&self.path);
+
+        std::fs::write(&temp_path, payload).map_err(|error| {
+            swarm_core::error::SwarmError::Internal {
+                reason: format!(
+                    "failed to write learning store temp file '{}': {}",
+                    temp_path.display(),
+                    error
+                ),
+            }
+        })?;
+
+        match std::fs::rename(&temp_path, &self.path) {
+            Ok(()) => Ok(()),
+            Err(rename_error) => match std::fs::remove_file(&self.path) {
+                Ok(()) => {
+                    std::fs::rename(&temp_path, &self.path).map_err(|error| {
+                        swarm_core::error::SwarmError::Internal {
+                            reason: format!(
+                                "failed to finalise learning store '{}': {}",
+                                self.path.display(),
+                                error
+                            ),
+                        }
+                    })?;
+                    Ok(())
+                }
+                Err(remove_error) if remove_error.kind() == std::io::ErrorKind::NotFound => {
+                    Err(swarm_core::error::SwarmError::Internal {
+                        reason: format!(
+                            "failed to rename learning store temp file into '{}': {}",
+                            self.path.display(),
+                            rename_error
+                        ),
+                    })
+                }
+                Err(remove_error) => Err(swarm_core::error::SwarmError::Internal {
+                    reason: format!(
+                        "failed to replace learning store '{}': {}; cleanup error: {}",
+                        self.path.display(),
+                        rename_error,
+                        remove_error
+                    ),
+                }),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl LearningStore for FileLearningStore {
+    async fn record(&self, output: LearningOutput) -> SwarmResult<()> {
+        let _guard = self.lock.lock().await;
+        let mut document = self.load_document()?;
+        match document
+            .outputs
+            .iter_mut()
+            .find(|existing| existing.id == output.id)
+        {
+            Some(existing) => *existing = output,
+            None => document.outputs.push(output),
+        }
+        self.save_document(&document)
+    }
+
+    async fn list_pending_approvals(
+        &self,
+        scope: &LearningScope,
+    ) -> SwarmResult<Vec<LearningOutput>> {
+        let _guard = self.lock.lock().await;
+        let mut outputs: Vec<_> = self
+            .load_document()?
+            .outputs
+            .into_iter()
+            .filter(|output| {
+                output.status == LearningStatus::PendingApproval && scope_matches(output, scope)
+            })
+            .collect();
+        outputs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        Ok(outputs)
+    }
+
+    async fn approve(&self, id: &LearningRuleId) -> SwarmResult<()> {
+        let _guard = self.lock.lock().await;
+        let mut document = self.load_document()?;
+        let output = document
+            .outputs
+            .iter_mut()
+            .find(|output| output.id == *id)
+            .ok_or_else(|| swarm_core::error::SwarmError::Internal {
+                reason: format!("Learning output {} not found", id),
+            })?;
+        output.status = LearningStatus::Applied;
+        output.applied_at = Some(Utc::now());
+        self.save_document(&document)
+    }
+
+    async fn reject(&self, id: &LearningRuleId) -> SwarmResult<()> {
+        let _guard = self.lock.lock().await;
+        let mut document = self.load_document()?;
+        let output = document
+            .outputs
+            .iter_mut()
+            .find(|output| output.id == *id)
+            .ok_or_else(|| swarm_core::error::SwarmError::Internal {
+                reason: format!("Learning output {} not found", id),
+            })?;
+        output.status = LearningStatus::Rejected;
+        self.save_document(&document)
+    }
+
+    async fn rollback(&self, id: &LearningRuleId) -> SwarmResult<()> {
+        let _guard = self.lock.lock().await;
+        let mut document = self.load_document()?;
+        let output = document
+            .outputs
+            .iter_mut()
+            .find(|output| output.id == *id)
+            .ok_or_else(|| swarm_core::error::SwarmError::Internal {
+                reason: format!("Learning output {} not found", id),
+            })?;
+        output.status = LearningStatus::RolledBack;
+        self.save_document(&document)
+    }
+
+    async fn get(&self, id: &LearningRuleId) -> SwarmResult<Option<LearningOutput>> {
+        let _guard = self.lock.lock().await;
+        Ok(self
+            .load_document()?
+            .outputs
+            .into_iter()
+            .find(|output| output.id == *id))
+    }
+
+    async fn count(&self, scope: &LearningScope) -> SwarmResult<u64> {
+        let _guard = self.lock.lock().await;
+        Ok(self
+            .load_document()?
+            .outputs
+            .into_iter()
+            .filter(|output| scope_matches(output, scope))
+            .count() as u64)
+    }
+}
+
+fn temporary_store_path(path: &Path) -> PathBuf {
+    let mut temp_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "learning-store".into());
+    temp_name.push_str(".tmp");
+    path.with_file_name(temp_name)
 }
 
 /// In-memory implementation of [`LearningStore`] for testing.
@@ -69,26 +311,13 @@ impl LearningStore for InMemoryLearningStore {
         &self,
         scope: &LearningScope,
     ) -> SwarmResult<Vec<LearningOutput>> {
-        let scope_label = scope.label();
         Ok(self
             .outputs
             .iter()
-            .filter(|e| {
-                let o = e.value();
-                o.status == crate::output::LearningStatus::PendingApproval
-                    && match scope {
-                        LearningScope::Agent { agent_id } => {
-                            o.agent_id.as_deref() == Some(agent_id.as_str())
-                        }
-                        LearningScope::Tenant { tenant_id } => {
-                            o.tenant_id.as_deref() == Some(tenant_id.as_str())
-                        }
-                        LearningScope::Global => true,
-                        _ => {
-                            let _ = scope_label;
-                            true
-                        }
-                    }
+            .filter(|entry| {
+                let output = entry.value();
+                output.status == crate::output::LearningStatus::PendingApproval
+                    && scope_matches(output, scope)
             })
             .map(|e| e.value().clone())
             .collect())
@@ -132,8 +361,12 @@ impl LearningStore for InMemoryLearningStore {
         Ok(self.outputs.get(id).map(|e| e.value().clone()))
     }
 
-    async fn count(&self, _scope: &LearningScope) -> SwarmResult<u64> {
-        Ok(self.outputs.len() as u64)
+    async fn count(&self, scope: &LearningScope) -> SwarmResult<u64> {
+        Ok(self
+            .outputs
+            .iter()
+            .filter(|entry| scope_matches(entry.value(), scope))
+            .count() as u64)
     }
 }
 
@@ -180,5 +413,38 @@ mod tests {
 
         let rolled_back = store.get(&id).await.unwrap().unwrap();
         assert_eq!(rolled_back.status, LearningStatus::RolledBack);
+    }
+
+    #[tokio::test]
+    async fn file_store_persists_outputs_across_instances() {
+        let path =
+            std::env::temp_dir().join(format!("swarm-learning-{}.json", uuid::Uuid::new_v4()));
+        let first_store = FileLearningStore::new(&path);
+        let mut output = LearningOutput::requires_review(
+            LearningCategory::ConfigurationEvolution,
+            "Persist me",
+            serde_json::json!({"timeout": 900}),
+            serde_json::json!({"source": "test"}),
+        );
+        output.tenant_id = Some("tenant-a".into());
+        let output_id = output.id;
+
+        first_store.record(output).await.unwrap();
+
+        let second_store = FileLearningStore::new(&path);
+        let pending = second_store
+            .list_pending_approvals(&LearningScope::Tenant {
+                tenant_id: "tenant-a".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, output_id);
+
+        second_store.approve(&output_id).await.unwrap();
+        let approved = second_store.get(&output_id).await.unwrap().unwrap();
+        assert_eq!(approved.status, LearningStatus::Applied);
+
+        std::fs::remove_file(path).unwrap();
     }
 }

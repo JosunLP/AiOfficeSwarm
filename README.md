@@ -208,6 +208,8 @@ The CLI now exposes lightweight inspection commands for key enterprise concepts:
 - `swarm role list` — enumerate loadable role definitions.
 - `swarm role validate` — validate role files and print diagnostics.
 - `swarm learning inspect` — show the effective learning governance baseline.
+- `swarm learning pending --scope global` — inspect the persistent learning approval queue.
+- `swarm learning approve <id>` / `reject <id>` / `rollback <id>` — manage learning lifecycle decisions.
 - `swarm config --format json` — inspect the full effective configuration, including provider, memory, learning, plugin, and role settings.
 
 ---
@@ -233,7 +235,7 @@ Current limits remain explicit:
 
 - provider routing currently annotates execution context rather than invoking providers directly,
 - orchestrator-level submit/schedule policy enforcement is still an embedding concern,
-- cross-process learning queue inspection is not yet implemented.
+- team/workflow-specific learning scopes are not yet persisted as first-class identifiers in learning outputs.
 
 The injected metadata includes keys such as:
 

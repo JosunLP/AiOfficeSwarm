@@ -26,6 +26,9 @@ fn orchestrator_config_from_swarm(
     swarm_orchestrator::OrchestratorConfig {
         event_channel_capacity: config.event_channel_capacity,
         max_dispatch_per_tick: config.max_dispatch_per_tick,
+        default_task_timeout: (config.default_task_timeout_secs != 0)
+            .then(|| std::time::Duration::from_secs(config.default_task_timeout_secs)),
+        max_concurrent_tasks: config.max_concurrent_tasks,
     }
 }
 
@@ -189,10 +192,17 @@ mod tests {
         let mut config = SwarmConfig::default();
         config.orchestrator.event_channel_capacity = 32;
         config.orchestrator.max_dispatch_per_tick = 7;
+        config.orchestrator.default_task_timeout_secs = 45;
+        config.orchestrator.max_concurrent_tasks = 3;
 
         let orchestrator_config = orchestrator_config_from_swarm(&config.orchestrator);
 
         assert_eq!(orchestrator_config.event_channel_capacity, 32);
         assert_eq!(orchestrator_config.max_dispatch_per_tick, 7);
+        assert_eq!(
+            orchestrator_config.default_task_timeout,
+            Some(std::time::Duration::from_secs(45))
+        );
+        assert_eq!(orchestrator_config.max_concurrent_tasks, 3);
     }
 }

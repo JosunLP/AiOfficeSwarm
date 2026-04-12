@@ -51,12 +51,11 @@ pub struct OrchestratorConfig {
     pub event_channel_capacity: usize,
     /// How many task dispatch attempts per scheduling tick.
     pub max_dispatch_per_tick: usize,
-    /// Reserved for future runtime enforcement: default task timeout in seconds
-    /// when a task spec leaves its timeout as `None` (0 = no timeout).
+    /// Default task timeout in seconds when a submitted task leaves its timeout
+    /// as `None` (0 = no timeout).
     /// `TaskSpec::new` currently sets its own five-minute timeout explicitly.
     pub default_task_timeout_secs: u64,
-    /// Reserved for future scheduler/runtime enforcement: maximum number of
-    /// concurrent tasks across the whole swarm.
+    /// Maximum number of concurrent scheduled/running tasks across the whole swarm.
     pub max_concurrent_tasks: usize,
 }
 
@@ -254,6 +253,8 @@ pub struct LearningConfig {
     pub max_pending_outputs: u64,
     /// Default scope used for operator-facing governance and approval queues.
     pub default_scope: LearningScopeKind,
+    /// JSON file used for cross-process learning queue persistence and CLI inspection.
+    pub store_path: String,
 }
 
 impl Default for LearningConfig {
@@ -263,6 +264,7 @@ impl Default for LearningConfig {
             require_approval_by_default: true,
             max_pending_outputs: 100,
             default_scope: LearningScopeKind::default(),
+            store_path: ".swarm/learning-store.json".into(),
         }
     }
 }

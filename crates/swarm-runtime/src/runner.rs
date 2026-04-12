@@ -198,7 +198,7 @@ impl TaskRunner {
             return Err(start_err);
         }
 
-        match task.spec.timeout {
+        match self.effective_timeout(&task) {
             Some(timeout) => {
                 self.execute_with_timeout(task_id, agent_id, task, timeout)
                     .await
@@ -235,6 +235,16 @@ impl TaskRunner {
     ) -> SwarmResult<serde_json::Value> {
         let result = self.agent.execute(task).await;
         self.finish_execution(task_id, agent_id, result).await
+    }
+
+    fn effective_timeout(&self, task: &Task) -> Option<std::time::Duration> {
+        let agent_limit = self.agent.descriptor().resource_limits.max_execution_time;
+        match (task.spec.timeout, agent_limit) {
+            (Some(task_timeout), Some(agent_timeout)) => Some(task_timeout.min(agent_timeout)),
+            (Some(task_timeout), None) => Some(task_timeout),
+            (None, Some(agent_timeout)) => Some(agent_timeout),
+            (None, None) => None,
+        }
     }
 
     async fn finish_execution(
@@ -810,6 +820,7 @@ mod tests {
         agent::{AgentDescriptor, AgentKind},
         capability::CapabilitySet,
         task::TaskSpec,
+        ResourceLimits,
     };
     use swarm_learning::{store::InMemoryLearningStore, LearningStatus};
     use swarm_memory::{in_memory::InMemoryBackend, MemoryBackend};
@@ -1046,12 +1057,16 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn run_task_without_timeout_does_not_apply_default_deadline() {
-        let orch = Orchestrator::new();
+    async fn run_task_without_timeout_and_disabled_defaults_keeps_running() {
+        let orch = Orchestrator::with_config(swarm_orchestrator::OrchestratorConfig {
+            default_task_timeout: None,
+            ..swarm_orchestrator::OrchestratorConfig::default()
+        });
         let handle = orch.handle();
 
-        let desc =
+        let mut desc =
             AgentDescriptor::new("very-slow-worker", AgentKind::Worker, CapabilitySet::new());
+        desc.resource_limits = ResourceLimits::unlimited();
         let agent = VerySlowAgent {
             descriptor: desc.clone(),
         };
@@ -1075,13 +1090,43 @@ mod tests {
 
         assert!(
             !run.is_finished(),
-            "task with timeout=None should not inherit a default deadline"
+            "task with timeout=None should keep running when orchestrator and agent defaults are disabled"
         );
 
         let running_task = handle.get_task(&task_id).unwrap();
         assert_eq!(running_task.status.label(), "running");
 
         run.abort();
+    }
+
+    #[tokio::test]
+    async fn run_task_without_task_timeout_uses_agent_execution_limit() {
+        let orch = Orchestrator::new();
+        let handle = orch.handle();
+
+        let mut desc =
+            AgentDescriptor::new("limited-worker", AgentKind::Worker, CapabilitySet::new());
+        desc.resource_limits.max_execution_time = Some(Duration::from_millis(5));
+        let agent = SlowAgent {
+            descriptor: desc.clone(),
+        };
+        let agent_id = desc.id;
+
+        handle.register_agent(desc).unwrap();
+        handle.set_agent_ready(agent_id).unwrap();
+
+        let mut spec = TaskSpec::new("t", serde_json::json!({}));
+        spec.timeout = None;
+        let task_id = handle.submit_task(spec).unwrap();
+        handle.try_schedule_next().unwrap();
+
+        let task = handle.get_task(&task_id).unwrap();
+        let mut runner = TaskRunner::new(Box::new(agent), handle.clone());
+
+        assert!(matches!(
+            runner.run_task(task).await,
+            Err(SwarmError::TaskTimeout { id, .. }) if id == task_id
+        ));
     }
 
     #[tokio::test]

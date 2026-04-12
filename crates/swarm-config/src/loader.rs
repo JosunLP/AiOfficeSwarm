@@ -60,6 +60,7 @@ impl ConfigLoader {
     /// - `SWARM_MEMORY_AUTO_APPLY_RETENTION`
     /// - `SWARM_LEARNING_ENABLED`
     /// - `SWARM_LEARNING_REQUIRE_APPROVAL_BY_DEFAULT`
+    /// - `SWARM_LEARNING_STORE_PATH`
     pub fn with_env_overrides(mut config: SwarmConfig) -> SwarmConfig {
         if let Ok(level) = std::env::var("SWARM_LOG_LEVEL") {
             config.telemetry.log_level = level;
@@ -121,6 +122,9 @@ impl ConfigLoader {
                 config.learning.require_approval_by_default = value;
             }
         }
+        if let Ok(store_path) = std::env::var("SWARM_LEARNING_STORE_PATH") {
+            config.learning.store_path = store_path;
+        }
         config
     }
 }
@@ -167,6 +171,7 @@ mod tests {
         std::env::set_var("SWARM_MEMORY_AUTO_APPLY_RETENTION", "false");
         std::env::set_var("SWARM_LEARNING_ENABLED", "true");
         std::env::set_var("SWARM_LEARNING_REQUIRE_APPROVAL_BY_DEFAULT", "false");
+        std::env::set_var("SWARM_LEARNING_STORE_PATH", "/tmp/swarm-learning-test.json");
 
         let cfg = ConfigLoader::with_env_overrides(ConfigLoader::defaults());
 
@@ -179,6 +184,7 @@ mod tests {
         assert!(!cfg.memory.auto_apply_retention);
         assert!(cfg.learning.enabled);
         assert!(!cfg.learning.require_approval_by_default);
+        assert_eq!(cfg.learning.store_path, "/tmp/swarm-learning-test.json");
 
         std::env::remove_var("SWARM_PROVIDER_DEFAULT_PROVIDER");
         std::env::remove_var("SWARM_PROVIDER_ROUTING_STRATEGY");
@@ -186,5 +192,6 @@ mod tests {
         std::env::remove_var("SWARM_MEMORY_AUTO_APPLY_RETENTION");
         std::env::remove_var("SWARM_LEARNING_ENABLED");
         std::env::remove_var("SWARM_LEARNING_REQUIRE_APPROVAL_BY_DEFAULT");
+        std::env::remove_var("SWARM_LEARNING_STORE_PATH");
     }
 }
