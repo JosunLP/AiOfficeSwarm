@@ -493,8 +493,8 @@ mod tests {
 
     #[test]
     fn learning_output_filter_matches_expected_output() {
-        let filter = learning_output_filter(Some("plan_template"), Some("pending_approval"))
-            .unwrap();
+        let filter =
+            learning_output_filter(Some("plan_template"), Some("pending_approval")).unwrap();
         let output = LearningOutput::requires_review(
             LearningCategory::PlanTemplate,
             "Template",
