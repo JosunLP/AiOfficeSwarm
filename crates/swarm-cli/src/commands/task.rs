@@ -6,7 +6,7 @@ use swarm_config::SwarmConfig;
 use swarm_core::{
     capability::Capability,
     identity::TaskId,
-    task::{Task, TaskPriority, TaskSpec, TaskStatus},
+    task::{Task, TaskPriority, TaskSpec},
 };
 use swarm_orchestrator::{FileTaskStore, TaskStore};
 
@@ -257,6 +257,7 @@ pub async fn run(args: TaskArgs, config: &SwarmConfig) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use swarm_core::task::TaskStatus;
     use tempfile::tempdir;
 
     async fn test_config() -> (tempfile::TempDir, SwarmConfig) {
