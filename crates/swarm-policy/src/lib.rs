@@ -14,8 +14,8 @@
 //! ## Integration
 //! Embedding applications can invoke the policy engine around sensitive
 //! operations (task scheduling, plugin invocation, agent creation, etc.).
-//! The current `swarm-orchestrator` crate does not wire these checks in
-//! automatically.
+//! `swarm-orchestrator` can enforce submission and scheduling policy checks when
+//! constructed with an attached [`PolicyEngine`].
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::all)]

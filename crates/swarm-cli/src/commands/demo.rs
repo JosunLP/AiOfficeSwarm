@@ -110,7 +110,7 @@ pub async fn run(args: DemoArgs, config: &SwarmConfig) -> anyhow::Result<()> {
             format!("task-{}", i),
             serde_json::json!({ "message": format!("Hello from task {}", i) }),
         );
-        let task_id = handle.submit_task(spec)?;
+        let task_id = handle.submit_task(spec).await?;
         task_ids.push(task_id);
         metrics.inc_tasks_submitted();
     }
@@ -137,7 +137,7 @@ pub async fn run(args: DemoArgs, config: &SwarmConfig) -> anyhow::Result<()> {
 
     for _ in 0..args.task_count {
         // Schedule the next task.
-        if let Some(task_id) = handle.try_schedule_next()? {
+        if let Some(task_id) = handle.try_schedule_next().await? {
             let task = handle.get_task(&task_id)?;
             let assigned_to = match task.status {
                 TaskStatus::Scheduled { assigned_to } => assigned_to,

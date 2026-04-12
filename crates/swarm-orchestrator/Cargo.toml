@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 swarm-core = { workspace = true }
+swarm-policy = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }

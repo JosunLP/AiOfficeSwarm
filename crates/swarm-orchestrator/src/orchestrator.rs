@@ -13,8 +13,10 @@ use swarm_core::{
     error::{SwarmError, SwarmResult},
     event::{Event, EventEnvelope, EventKind},
     identity::{AgentId, TaskId},
+    policy::PolicyContext,
     task::{Task, TaskSpec, TaskStatus},
 };
+use swarm_policy::PolicyEngine;
 
 use crate::{
     registry::AgentRegistry,
@@ -58,12 +60,13 @@ struct OrchestratorState {
     supervision: SupervisionManager,
     scheduler: Scheduler,
     event_tx: broadcast::Sender<Event>,
+    policy_engine: Option<PolicyEngine>,
     default_task_timeout: Option<Duration>,
     max_concurrent_tasks: usize,
 }
 
 impl OrchestratorState {
-    fn new(config: &OrchestratorConfig) -> Self {
+    fn new(config: &OrchestratorConfig, policy_engine: Option<PolicyEngine>) -> Self {
         let (event_tx, _) = broadcast::channel(config.event_channel_capacity);
         let registry = AgentRegistry::new();
         let scheduler = Scheduler::new(registry.clone());
@@ -74,6 +77,7 @@ impl OrchestratorState {
             supervision: SupervisionManager::new(),
             scheduler,
             event_tx,
+            policy_engine,
             default_task_timeout: config.default_task_timeout,
             max_concurrent_tasks: config.max_concurrent_tasks,
         }
@@ -115,7 +119,19 @@ impl Orchestrator {
 
     /// Create a new orchestrator with explicit configuration.
     pub fn with_config(config: OrchestratorConfig) -> Self {
-        let state = Arc::new(OrchestratorState::new(&config));
+        let state = Arc::new(OrchestratorState::new(&config, None));
+        state.emit(EventKind::OrchestratorStarted);
+        tracing::info!("Orchestrator started");
+        Self { state }
+    }
+
+    /// Create a new orchestrator with explicit configuration and task admission
+    /// policy enforcement.
+    pub fn with_config_and_policy_engine(
+        config: OrchestratorConfig,
+        policy_engine: PolicyEngine,
+    ) -> Self {
+        let state = Arc::new(OrchestratorState::new(&config, Some(policy_engine)));
         state.emit(EventKind::OrchestratorStarted);
         tracing::info!("Orchestrator started");
         Self { state }
@@ -202,11 +218,12 @@ impl OrchestratorHandle {
     ///
     /// The task is validated, stored, and placed in the priority queue.
     /// Returns the new task's ID.
-    pub fn submit_task(&self, mut spec: TaskSpec) -> SwarmResult<TaskId> {
+    pub async fn submit_task(&self, mut spec: TaskSpec) -> SwarmResult<TaskId> {
         if spec.timeout.is_none() {
             spec.timeout = self.state.default_task_timeout;
         }
         spec.validate()?;
+        self.enforce_task_policy("submit_task", &spec).await?;
         let task = Task::new(spec);
         let task_id = task.id;
         self.state.tasks.insert(task_id, task.clone());
@@ -223,7 +240,7 @@ impl OrchestratorHandle {
     ///
     /// Returns `Some(TaskId)` if a task was successfully scheduled, `None` if
     /// the queue is empty or no agents are available.
-    pub fn try_schedule_next(&self) -> SwarmResult<Option<TaskId>> {
+    pub async fn try_schedule_next(&self) -> SwarmResult<Option<TaskId>> {
         if self.state.in_flight_task_count() >= self.state.max_concurrent_tasks {
             tracing::debug!(
                 max_concurrent_tasks = self.state.max_concurrent_tasks,
@@ -236,6 +253,7 @@ impl OrchestratorHandle {
             Some(t) => t,
             None => return Ok(None),
         };
+        self.enforce_task_policy("schedule_task", &task.spec).await?;
 
         match self.state.scheduler.schedule(&task)? {
             SchedulingDecision::Assigned { task_id, agent_id } => {
@@ -397,6 +415,43 @@ impl OrchestratorHandle {
     pub fn publish_event(&self, kind: EventKind) {
         self.state.emit(kind);
     }
+
+    async fn enforce_task_policy(&self, action: &str, spec: &TaskSpec) -> SwarmResult<()> {
+        let Some(policy_engine) = &self.state.policy_engine else {
+            return Ok(());
+        };
+
+        let mut context = PolicyContext::new(action, "orchestrator", &spec.name);
+        context.attributes = serde_json::json!({
+            "task_name": spec.name,
+            "priority": format!("{:?}", spec.priority).to_lowercase(),
+            "required_capabilities": spec
+                .required_capabilities
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            "metadata": spec.metadata.0.clone(),
+        });
+
+        match policy_engine.enforce(&context).await {
+            Ok(()) => {
+                self.state.emit(EventKind::PolicyEvaluated {
+                    action: context.action,
+                    subject: context.subject,
+                    decision: "allowed".into(),
+                });
+                Ok(())
+            }
+            Err(error) => {
+                self.state.emit(EventKind::PolicyEvaluated {
+                    action: context.action,
+                    subject: context.subject,
+                    decision: "denied".into(),
+                });
+                Err(error)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -406,8 +461,11 @@ mod tests {
         agent::{AgentDescriptor, AgentKind},
         capability::{Capability, CapabilitySet},
         event::EventKind,
+        policy::PolicyContext,
         task::{TaskSpec, TaskStatus},
     };
+    use swarm_policy::ActionAllowlistPolicy;
+    use std::sync::Arc;
 
     fn make_worker(caps: CapabilitySet) -> AgentDescriptor {
         AgentDescriptor::new("worker-1", AgentKind::Worker, caps)
@@ -422,16 +480,16 @@ mod tests {
         (handle, agent_id)
     }
 
-    #[test]
-    fn submit_and_schedule_task() {
+    #[tokio::test]
+    async fn submit_and_schedule_task() {
         let (handle, agent_id) = orchestrator_with_ready_worker();
 
         let spec = TaskSpec::new("test-task", serde_json::json!({"x": 1}));
-        let task_id = handle.submit_task(spec).unwrap();
+        let task_id = handle.submit_task(spec).await.unwrap();
 
         assert_eq!(handle.pending_task_count(), 1);
 
-        let scheduled = handle.try_schedule_next().unwrap();
+        let scheduled = handle.try_schedule_next().await.unwrap();
         assert_eq!(scheduled, Some(task_id));
         assert_eq!(handle.pending_task_count(), 0);
 
@@ -441,8 +499,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn task_not_scheduled_when_no_capable_agent() {
+    #[tokio::test]
+    async fn task_not_scheduled_when_no_capable_agent() {
         let orch = Orchestrator::new();
         let handle = orch.handle();
 
@@ -458,20 +516,21 @@ mod tests {
             c.add(Capability::new("image-analysis"));
             c
         };
-        handle.submit_task(spec).unwrap();
+        handle.submit_task(spec).await.unwrap();
 
-        let result = handle.try_schedule_next().unwrap();
+        let result = handle.try_schedule_next().await.unwrap();
         assert!(result.is_none());
     }
 
-    #[test]
-    fn full_task_lifecycle() {
+    #[tokio::test]
+    async fn full_task_lifecycle() {
         let (handle, agent_id) = orchestrator_with_ready_worker();
 
         let task_id = handle
             .submit_task(TaskSpec::new("t", serde_json::json!({})))
+            .await
             .unwrap();
-        handle.try_schedule_next().unwrap();
+        handle.try_schedule_next().await.unwrap();
         handle.record_task_started(task_id, agent_id).unwrap();
         handle
             .record_task_completed(task_id, agent_id, serde_json::json!({"done": true}))
@@ -482,11 +541,11 @@ mod tests {
         assert_eq!(task.status.label(), "completed");
     }
 
-    #[test]
-    fn invalid_task_name_rejected() {
+    #[tokio::test]
+    async fn invalid_task_name_rejected() {
         let (handle, _) = orchestrator_with_ready_worker();
         let spec = TaskSpec::new("   ", serde_json::json!({}));
-        assert!(handle.submit_task(spec).is_err());
+        assert!(handle.submit_task(spec).await.is_err());
     }
 
     #[test]
@@ -526,8 +585,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn submit_task_applies_default_timeout_when_missing() {
+    #[tokio::test]
+    async fn submit_task_applies_default_timeout_when_missing() {
         let orch = Orchestrator::with_config(OrchestratorConfig {
             default_task_timeout: Some(Duration::from_secs(42)),
             ..OrchestratorConfig::default()
@@ -540,14 +599,14 @@ mod tests {
         let mut spec = TaskSpec::new("timeout-from-config", serde_json::json!({}));
         spec.timeout = None;
 
-        let task_id = handle.submit_task(spec).unwrap();
+        let task_id = handle.submit_task(spec).await.unwrap();
         let task = handle.get_task(&task_id).unwrap();
 
         assert_eq!(task.spec.timeout, Some(Duration::from_secs(42)));
     }
 
-    #[test]
-    fn zero_default_timeout_preserves_timeout_none() {
+    #[tokio::test]
+    async fn zero_default_timeout_preserves_timeout_none() {
         let orch = Orchestrator::with_config(OrchestratorConfig {
             default_task_timeout: None,
             ..OrchestratorConfig::default()
@@ -560,14 +619,14 @@ mod tests {
         let mut spec = TaskSpec::new("no-timeout", serde_json::json!({}));
         spec.timeout = None;
 
-        let task_id = handle.submit_task(spec).unwrap();
+        let task_id = handle.submit_task(spec).await.unwrap();
         let task = handle.get_task(&task_id).unwrap();
 
         assert_eq!(task.spec.timeout, None);
     }
 
-    #[test]
-    fn scheduling_respects_global_concurrency_limit() {
+    #[tokio::test]
+    async fn scheduling_respects_global_concurrency_limit() {
         let orch = Orchestrator::with_config(OrchestratorConfig {
             max_concurrent_tasks: 1,
             ..OrchestratorConfig::default()
@@ -586,13 +645,15 @@ mod tests {
 
         let first_task_id = handle
             .submit_task(TaskSpec::new("first", serde_json::json!({})))
+            .await
             .unwrap();
         let second_task_id = handle
             .submit_task(TaskSpec::new("second", serde_json::json!({})))
+            .await
             .unwrap();
 
-        assert_eq!(handle.try_schedule_next().unwrap(), Some(first_task_id));
-        assert_eq!(handle.try_schedule_next().unwrap(), None);
+        assert_eq!(handle.try_schedule_next().await.unwrap(), Some(first_task_id));
+        assert_eq!(handle.try_schedule_next().await.unwrap(), None);
 
         let assigned_agent_id = match handle.get_task(&first_task_id).unwrap().status {
             TaskStatus::Scheduled { assigned_to } => assigned_to,
@@ -610,6 +671,128 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(handle.try_schedule_next().unwrap(), Some(second_task_id));
+        assert_eq!(handle.try_schedule_next().await.unwrap(), Some(second_task_id));
+    }
+
+    #[tokio::test]
+    async fn attached_policy_engine_controls_submission_and_scheduling() {
+        let policy_engine = PolicyEngine::deny_by_default();
+        policy_engine
+            .register(Arc::new(ActionAllowlistPolicy::new(
+                "task-policy",
+                ["submit_task", "schedule_task"],
+            )))
+            .await;
+        let orch = Orchestrator::with_config_and_policy_engine(
+            OrchestratorConfig::default(),
+            policy_engine,
+        );
+        let handle = orch.handle();
+        let agent_id = handle.register_agent(make_worker(CapabilitySet::new())).unwrap();
+        handle.set_agent_ready(agent_id).unwrap();
+
+        let task_id = handle
+            .submit_task(TaskSpec::new("policy-task", serde_json::json!({})))
+            .await
+            .unwrap();
+
+        assert_eq!(handle.try_schedule_next().await.unwrap(), Some(task_id));
+    }
+
+    #[tokio::test]
+    async fn submission_policy_denial_rejects_task_and_emits_event() {
+        let policy_engine = PolicyEngine::deny_by_default();
+        policy_engine
+            .register(Arc::new(ActionAllowlistPolicy::new(
+                "schedule-only",
+                ["schedule_task"],
+            )))
+            .await;
+        let orch = Orchestrator::with_config_and_policy_engine(
+            OrchestratorConfig::default(),
+            policy_engine,
+        );
+        let mut rx = orch.subscribe();
+        let handle = orch.handle();
+
+        let error = handle
+            .submit_task(TaskSpec::new("blocked-task", serde_json::json!({})))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, SwarmError::PolicyViolation { action, .. } if action == "submit_task"));
+        assert_eq!(handle.pending_task_count(), 0);
+
+        loop {
+            let event = rx.try_recv().unwrap();
+            if let EventKind::PolicyEvaluated {
+                action,
+                subject,
+                decision,
+            } = event.kind
+            {
+                assert_eq!(action, "submit_task");
+                assert_eq!(subject, "orchestrator");
+                assert_eq!(decision, "denied");
+                break;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn scheduling_policy_denial_keeps_task_pending() {
+        let policy_engine = PolicyEngine::deny_by_default();
+        policy_engine
+            .register(Arc::new(PolicyByAction {
+                submit_allowed: true,
+                schedule_allowed: false,
+            }))
+            .await;
+        let orch = Orchestrator::with_config_and_policy_engine(
+            OrchestratorConfig::default(),
+            policy_engine,
+        );
+        let handle = orch.handle();
+        let agent_id = handle.register_agent(make_worker(CapabilitySet::new())).unwrap();
+        handle.set_agent_ready(agent_id).unwrap();
+
+        let task_id = handle
+            .submit_task(TaskSpec::new("blocked-schedule", serde_json::json!({})))
+            .await
+            .unwrap();
+
+        let error = handle.try_schedule_next().await.unwrap_err();
+        assert!(matches!(error, SwarmError::PolicyViolation { action, .. } if action == "schedule_task"));
+        assert_eq!(handle.pending_task_count(), 1);
+        assert!(matches!(handle.get_task(&task_id).unwrap().status, TaskStatus::Pending));
+    }
+
+    struct PolicyByAction {
+        submit_allowed: bool,
+        schedule_allowed: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl swarm_core::policy::Policy for PolicyByAction {
+        fn id(&self) -> swarm_core::identity::PolicyId {
+            "00000000-0000-0000-0000-000000000123"
+                .parse()
+                .expect("test UUID should parse")
+        }
+
+        fn name(&self) -> &str {
+            "policy-by-action"
+        }
+
+        async fn evaluate(&self, context: &PolicyContext) -> SwarmResult<swarm_core::policy::PolicyOutcome> {
+            match context.action.as_str() {
+                "submit_task" if self.submit_allowed => Ok(swarm_core::policy::PolicyOutcome::Allow),
+                "schedule_task" if self.schedule_allowed => {
+                    Ok(swarm_core::policy::PolicyOutcome::Allow)
+                }
+                _ => Ok(swarm_core::policy::PolicyOutcome::Deny {
+                    reason: format!("{} blocked", context.action),
+                }),
+            }
+        }
     }
 }

@@ -1292,8 +1292,9 @@ mod tests {
 
         let task_id = handle
             .submit_task(TaskSpec::new("t", serde_json::json!({"x": 1})))
+            .await
             .unwrap();
-        handle.try_schedule_next().unwrap();
+        handle.try_schedule_next().await.unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         let mut runner = TaskRunner::new(Box::new(agent), handle.clone());
@@ -1321,8 +1322,9 @@ mod tests {
 
         let task_id = handle
             .submit_task(TaskSpec::new("t", serde_json::json!({})))
+            .await
             .unwrap();
-        handle.try_schedule_next().unwrap();
+        handle.try_schedule_next().await.unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         let mut runner = TaskRunner::new(Box::new(agent), handle.clone());
@@ -1349,8 +1351,8 @@ mod tests {
 
         let mut spec = TaskSpec::new("t", serde_json::json!({}));
         spec.timeout = Some(Duration::from_millis(5));
-        let task_id = handle.submit_task(spec).unwrap();
-        handle.try_schedule_next().unwrap();
+        let task_id = handle.submit_task(spec).await.unwrap();
+        handle.try_schedule_next().await.unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         let mut runner = TaskRunner::new(Box::new(agent), handle.clone());
@@ -1385,8 +1387,8 @@ mod tests {
 
         let mut spec = TaskSpec::new("t", serde_json::json!({}));
         spec.timeout = None;
-        let task_id = handle.submit_task(spec).unwrap();
-        handle.try_schedule_next().unwrap();
+        let task_id = handle.submit_task(spec).await.unwrap();
+        handle.try_schedule_next().await.unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         let mut runner = TaskRunner::new(Box::new(agent), handle.clone());
@@ -1425,8 +1427,8 @@ mod tests {
 
         let mut spec = TaskSpec::new("t", serde_json::json!({}));
         spec.timeout = None;
-        let task_id = handle.submit_task(spec).unwrap();
-        handle.try_schedule_next().unwrap();
+        let task_id = handle.submit_task(spec).await.unwrap();
+        handle.try_schedule_next().await.unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         let mut runner = TaskRunner::new(Box::new(agent), handle.clone());
@@ -1453,8 +1455,9 @@ mod tests {
 
         let task_id = handle
             .submit_task(TaskSpec::new("t", serde_json::json!({"x": 1})))
+            .await
             .unwrap();
-        handle.try_schedule_next().unwrap();
+        handle.try_schedule_next().await.unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         let mut runner = TaskRunner::new(Box::new(agent), handle);
@@ -1534,8 +1537,9 @@ mod tests {
 
         let task_id = handle
             .submit_task(TaskSpec::new("t", serde_json::json!({"x": 1})))
+            .await
             .unwrap();
-        handle.try_schedule_next().unwrap();
+        handle.try_schedule_next().await.unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         let mut runner = TaskRunner::new(Box::new(agent), handle.clone()).with_execution_context(
@@ -1621,8 +1625,9 @@ mod tests {
 
         let task_id = handle
             .submit_task(TaskSpec::new("t", serde_json::json!({"x": 1})))
+            .await
             .unwrap();
-        handle.try_schedule_next().unwrap();
+        handle.try_schedule_next().await.unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         let mut runner = TaskRunner::new(Box::new(agent), handle).with_execution_context(
@@ -1659,8 +1664,9 @@ mod tests {
 
         let task_id = handle
             .submit_task(TaskSpec::new("t", serde_json::json!({})))
+            .await
             .unwrap();
-        handle.try_schedule_next().unwrap();
+        handle.try_schedule_next().await.unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         let mut runner = TaskRunner::new(Box::new(agent), handle.clone())
@@ -1696,8 +1702,9 @@ mod tests {
 
         let task_id = handle
             .submit_task(TaskSpec::new("t", serde_json::json!({"ok": true})))
+            .await
             .unwrap();
-        handle.try_schedule_next().unwrap();
+        handle.try_schedule_next().await.unwrap();
 
         let task = handle.get_task(&task_id).unwrap();
         let mut runner = TaskRunner::new(Box::new(agent), handle)
