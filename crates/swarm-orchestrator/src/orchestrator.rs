@@ -202,8 +202,7 @@ impl OrchestratorHandle {
     ///
     /// The task is validated, stored, and placed in the priority queue.
     /// Returns the new task's ID.
-    pub fn submit_task(&self, spec: TaskSpec) -> SwarmResult<TaskId> {
-        let mut spec = spec;
+    pub fn submit_task(&self, mut spec: TaskSpec) -> SwarmResult<TaskId> {
         if spec.timeout.is_none() {
             spec.timeout = self.state.default_task_timeout;
         }

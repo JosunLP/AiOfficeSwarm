@@ -125,14 +125,7 @@ impl FileLearningStore {
                 reason: format!("failed to serialise learning store: {}", error),
             }
         })?;
-        let temp_path = self.path.with_extension(format!(
-            "{}tmp",
-            self.path
-                .extension()
-                .and_then(|value| value.to_str())
-                .map(|value| format!("{value}."))
-                .unwrap_or_default()
-        ));
+        let temp_path = temporary_store_path(&self.path);
 
         std::fs::write(&temp_path, payload).map_err(|error| {
             swarm_core::error::SwarmError::Internal {
@@ -146,18 +139,8 @@ impl FileLearningStore {
 
         match std::fs::rename(&temp_path, &self.path) {
             Ok(()) => Ok(()),
-            Err(rename_error) => {
-                if self.path.exists() {
-                    std::fs::remove_file(&self.path).map_err(|remove_error| {
-                        swarm_core::error::SwarmError::Internal {
-                            reason: format!(
-                                "failed to replace learning store '{}': {}; cleanup error: {}",
-                                self.path.display(),
-                                rename_error,
-                                remove_error
-                            ),
-                        }
-                    })?;
+            Err(rename_error) => match std::fs::remove_file(&self.path) {
+                Ok(()) => {
                     std::fs::rename(&temp_path, &self.path).map_err(|error| {
                         swarm_core::error::SwarmError::Internal {
                             reason: format!(
@@ -168,7 +151,8 @@ impl FileLearningStore {
                         }
                     })?;
                     Ok(())
-                } else {
+                }
+                Err(remove_error) if remove_error.kind() == std::io::ErrorKind::NotFound => {
                     Err(swarm_core::error::SwarmError::Internal {
                         reason: format!(
                             "failed to rename learning store temp file into '{}': {}",
@@ -177,7 +161,15 @@ impl FileLearningStore {
                         ),
                     })
                 }
-            }
+                Err(remove_error) => Err(swarm_core::error::SwarmError::Internal {
+                    reason: format!(
+                        "failed to replace learning store '{}': {}; cleanup error: {}",
+                        self.path.display(),
+                        rename_error,
+                        remove_error
+                    ),
+                }),
+            },
         }
     }
 }
@@ -195,9 +187,6 @@ impl LearningStore for FileLearningStore {
             Some(existing) => *existing = output,
             None => document.outputs.push(output),
         }
-        document
-            .outputs
-            .sort_by(|left, right| left.created_at.cmp(&right.created_at));
         self.save_document(&document)
     }
 
@@ -279,6 +268,16 @@ impl LearningStore for FileLearningStore {
             .filter(|output| scope_matches(output, scope))
             .count() as u64)
     }
+}
+
+fn temporary_store_path(path: &Path) -> PathBuf {
+    let mut temp_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "learning-store".into());
+    temp_name.push_str(".tmp");
+    path.with_file_name(temp_name)
 }
 
 /// In-memory implementation of [`LearningStore`] for testing.
