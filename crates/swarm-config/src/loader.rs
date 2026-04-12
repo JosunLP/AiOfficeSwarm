@@ -52,6 +52,7 @@ impl ConfigLoader {
     /// - `SWARM_LOG_LEVEL`
     /// - `SWARM_INSTANCE_NAME`
     /// - `SWARM_EVENT_CHANNEL_CAPACITY`
+    /// - `SWARM_TASK_STORE_PATH`
     /// - `SWARM_ROLES_DIR`
     /// - `SWARM_PROVIDER_DEFAULT_PROVIDER`
     /// - `SWARM_PROVIDER_DEFAULT_MODEL`
@@ -72,6 +73,9 @@ impl ConfigLoader {
             if let Ok(v) = cap.parse() {
                 config.orchestrator.event_channel_capacity = v;
             }
+        }
+        if let Ok(path) = std::env::var("SWARM_TASK_STORE_PATH") {
+            config.orchestrator.task_store_path = path;
         }
         if let Ok(roles_dir) = std::env::var("SWARM_ROLES_DIR") {
             config.roles.roles_dir = Some(roles_dir);
@@ -138,6 +142,7 @@ mod tests {
         let cfg = ConfigLoader::defaults();
         assert_eq!(cfg.instance_name, "ai-office-swarm");
         assert_eq!(cfg.orchestrator.event_channel_capacity, 1024);
+        assert_eq!(cfg.orchestrator.task_store_path, ".swarm/task-store.json");
     }
 
     #[test]
@@ -171,6 +176,7 @@ mod tests {
         std::env::set_var("SWARM_MEMORY_AUTO_APPLY_RETENTION", "false");
         std::env::set_var("SWARM_LEARNING_ENABLED", "true");
         std::env::set_var("SWARM_LEARNING_REQUIRE_APPROVAL_BY_DEFAULT", "false");
+        std::env::set_var("SWARM_TASK_STORE_PATH", "/tmp/swarm-task-test.json");
         std::env::set_var("SWARM_LEARNING_STORE_PATH", "/tmp/swarm-learning-test.json");
 
         let cfg = ConfigLoader::with_env_overrides(ConfigLoader::defaults());
@@ -184,6 +190,10 @@ mod tests {
         assert!(!cfg.memory.auto_apply_retention);
         assert!(cfg.learning.enabled);
         assert!(!cfg.learning.require_approval_by_default);
+        assert_eq!(
+            cfg.orchestrator.task_store_path,
+            "/tmp/swarm-task-test.json"
+        );
         assert_eq!(cfg.learning.store_path, "/tmp/swarm-learning-test.json");
 
         std::env::remove_var("SWARM_PROVIDER_DEFAULT_PROVIDER");
@@ -192,6 +202,7 @@ mod tests {
         std::env::remove_var("SWARM_MEMORY_AUTO_APPLY_RETENTION");
         std::env::remove_var("SWARM_LEARNING_ENABLED");
         std::env::remove_var("SWARM_LEARNING_REQUIRE_APPROVAL_BY_DEFAULT");
+        std::env::remove_var("SWARM_TASK_STORE_PATH");
         std::env::remove_var("SWARM_LEARNING_STORE_PATH");
     }
 }
