@@ -375,11 +375,7 @@ async fn process_pending_tasks(
     let mut completed = 0;
     let mut failed = 0;
 
-    for _ in 0..pending_tasks.len() {
-        let Some(task_id) = handle.try_schedule_next().await? else {
-            break;
-        };
-
+    while let Some(task_id) = handle.try_schedule_next().await? {
         let scheduled_task = handle.get_task(&task_id)?;
         let assigned_to = match scheduled_task.status {
             TaskStatus::Scheduled { assigned_to } => assigned_to,
@@ -395,8 +391,9 @@ async fn process_pending_tasks(
             Ok(_) => {
                 completed += 1;
             }
-            Err(_) => {
+            Err(error) => {
                 failed += 1;
+                tracing::warn!(task_id = %task_id, error = %error, "persisted task processing failed");
             }
         }
 
