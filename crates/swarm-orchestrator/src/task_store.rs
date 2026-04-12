@@ -93,7 +93,7 @@ impl FileTaskStore {
 
         let payload =
             serde_json::to_string_pretty(document).map_err(|error| SwarmError::Internal {
-                reason: format!("failed to serialise task store: {}", error),
+                reason: format!("failed to serialize task store: {}", error),
             })?;
         let temp_path = temporary_store_path(&self.path);
 
