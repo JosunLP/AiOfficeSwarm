@@ -198,11 +198,10 @@ fn parse_learning_status(label: &str) -> anyhow::Result<LearningStatus> {
     }
 }
 
-fn matches_status_filter(output: &LearningOutput, requested: Option<&str>) -> anyhow::Result<bool> {
-    match requested {
-        Some(status) => Ok(output.status == parse_learning_status(status)?),
-        None => Ok(true),
-    }
+fn matches_status_filter(output: &LearningOutput, requested: Option<&LearningStatus>) -> bool {
+    requested
+        .map(|status| &output.status == status)
+        .unwrap_or(true)
 }
 
 pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()> {
@@ -225,19 +224,18 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
         }
         LearningSubcommand::List(args) => {
             let scope = resolve_scope(args.scope.as_deref(), args.scope_id.as_deref(), config)?;
+            let requested_status = args
+                .status
+                .as_deref()
+                .map(parse_learning_status)
+                .transpose()?;
             let outputs = learning_store(config)
                 .list(&scope)
                 .await?
                 .into_iter()
                 .filter(|output| matches_category_filter(output, args.category.as_deref()))
-                .filter_map(
-                    |output| match matches_status_filter(&output, args.status.as_deref()) {
-                        Ok(true) => Some(Ok(output)),
-                        Ok(false) => None,
-                        Err(error) => Some(Err(error)),
-                    },
-                )
-                .collect::<anyhow::Result<Vec<_>>>()?;
+                .filter(|output| matches_status_filter(output, requested_status.as_ref()))
+                .collect::<Vec<_>>();
 
             match args.format.as_str() {
                 "json" => println!("{}", serde_json::to_string_pretty(&outputs)?),

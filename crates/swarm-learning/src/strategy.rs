@@ -207,6 +207,8 @@ fn sorted_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
         })
         .unwrap_or_default();
     items.sort();
+    // Sorting first ensures duplicate capability labels become adjacent so the
+    // stored template delta remains deterministic after deduplication.
     items.dedup();
     items
 }
