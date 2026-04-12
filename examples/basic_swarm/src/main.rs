@@ -24,7 +24,7 @@ use swarm_core::{
     policy::PolicyContext,
     task::{Task, TaskPriority, TaskSpec, TaskStatus},
 };
-use swarm_learning::{store::InMemoryLearningStore, LearningScope, LearningStore};
+use swarm_learning::{FileLearningStore, LearningScope, LearningStore};
 use swarm_memory::{
     in_memory::InMemoryBackend, MemoryBackend, MemoryEntry, MemoryScope, MemoryType,
 };
@@ -290,11 +290,12 @@ async fn main() -> anyhow::Result<()> {
     println!();
 
     let memory_backend = Arc::new(InMemoryBackend::new());
-    let learning_store = Arc::new(InMemoryLearningStore::new());
+    let learning_store = Arc::new(FileLearningStore::new(&config.learning.store_path));
     let provider_registry = Arc::new(ProviderRegistry::new());
     provider_registry.register(Arc::new(DemoProvider {
         id: swarm_core::PluginId::new(),
     }))?;
+    println!("  Learning store: {}", learning_store.path().display());
 
     println!("── Registering Agents ──────────────────────────");
     let mut text_agent = TextProcessingAgent::new("TextProcessor-1");

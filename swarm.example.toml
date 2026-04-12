@@ -60,12 +60,14 @@ retention_interval_secs = 300
 
 [learning]
 # Learning settings define governance defaults for runtime-integrated learning
-# output capture and approval flows.
+# output capture, persistent approval queues, and CLI governance flows.
 enabled = false
 require_approval_by_default = true
 max_pending_outputs = 100
 # agent | team | tenant | workflow | global
 default_scope = "tenant"
+# JSON file used by persistent learning queue inspection commands.
+store_path = ".swarm/learning-store.json"
 
 [plugins]
 # Directory to scan for plugin definitions (optional)

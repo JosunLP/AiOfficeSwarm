@@ -595,13 +595,18 @@ mod tests {
         assert_eq!(handle.try_schedule_next().unwrap(), Some(first_task_id));
         assert_eq!(handle.try_schedule_next().unwrap(), None);
 
+        let assigned_agent_id = match handle.get_task(&first_task_id).unwrap().status {
+            TaskStatus::Scheduled { assigned_to } => assigned_to,
+            status => panic!("expected scheduled task, got {}", status.label()),
+        };
+
         handle
-            .record_task_started(first_task_id, worker_a_id)
+            .record_task_started(first_task_id, assigned_agent_id)
             .unwrap();
         handle
             .record_task_completed(
                 first_task_id,
-                worker_a_id,
+                assigned_agent_id,
                 serde_json::json!({"done": true}),
             )
             .unwrap();

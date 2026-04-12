@@ -37,6 +37,14 @@ impl std::fmt::Display for LearningRuleId {
     }
 }
 
+impl std::str::FromStr for LearningRuleId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(Uuid::parse_str(s)?))
+    }
+}
+
 /// The category of a learning output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LearningCategory {
@@ -58,6 +66,23 @@ pub enum LearningCategory {
     FineTuningData,
     /// Custom category.
     Custom(String),
+}
+
+impl LearningCategory {
+    /// Returns a stable label for CLI output and metrics.
+    pub fn label(&self) -> &str {
+        match self {
+            Self::PreferenceAdaptation => "preference_adaptation",
+            Self::PatternExtraction => "pattern_extraction",
+            Self::FeedbackIncorporation => "feedback_incorporation",
+            Self::PlanTemplate => "plan_template",
+            Self::ScoringImprovement => "scoring_improvement",
+            Self::KnowledgeAccumulation => "knowledge_accumulation",
+            Self::ConfigurationEvolution => "configuration_evolution",
+            Self::FineTuningData => "fine_tuning_data",
+            Self::Custom(value) => value.as_str(),
+        }
+    }
 }
 
 /// A single learning output produced by a strategy.

@@ -117,6 +117,10 @@ pub async fn run(args: ConfigArgs, config: &SwarmConfig) -> anyhow::Result<()> {
                 "    default_scope:              {:?}",
                 config.learning.default_scope
             );
+            println!(
+                "    store_path:                 {}",
+                config.learning.store_path
+            );
             println!("  roles:");
             println!(
                 "    roles_dir:                  {}",

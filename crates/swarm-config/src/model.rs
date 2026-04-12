@@ -253,6 +253,8 @@ pub struct LearningConfig {
     pub max_pending_outputs: u64,
     /// Default scope used for operator-facing governance and approval queues.
     pub default_scope: LearningScopeKind,
+    /// JSON file used for cross-process learning queue persistence and CLI inspection.
+    pub store_path: String,
 }
 
 impl Default for LearningConfig {
@@ -262,6 +264,7 @@ impl Default for LearningConfig {
             require_approval_by_default: true,
             max_pending_outputs: 100,
             default_scope: LearningScopeKind::default(),
+            store_path: ".swarm/learning-store.json".into(),
         }
     }
 }
