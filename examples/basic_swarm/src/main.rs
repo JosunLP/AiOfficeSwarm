@@ -17,6 +17,11 @@ use serde_json::json;
 use tracing::info;
 
 use swarm_config::ConfigLoader;
+use swarm_config::model::{
+    ProviderRoutingStrategy as ConfigProviderRoutingStrategy,
+    RoutingCostPreference as ConfigRoutingCostPreference,
+    RoutingLatencyPreference as ConfigRoutingLatencyPreference,
+};
 use swarm_core::{
     agent::{Agent, AgentDescriptor, AgentKind},
     capability::{Capability, CapabilitySet},
@@ -36,10 +41,11 @@ use swarm_personality::PersonalityProfile;
 use swarm_plugin::PluginHost;
 use swarm_policy::{AllowAllPolicy, PolicyEngine};
 use swarm_provider::{
-    ChatRequest, ChatResponse, ModelProvider, ProviderCapabilities, ProviderRegistry,
+    ChatRequest, ChatResponse, CostPreference, LatencyPreference, ModelProvider,
+    ProviderCapabilities, ProviderRegistry, RoutingStrategy,
 };
 use swarm_role::RoleLoadOptions;
-use swarm_runtime::{TaskExecutionContext, TaskRunner};
+use swarm_runtime::{ProviderRoutingOptions, TaskExecutionContext, TaskRunner};
 use swarm_telemetry::{init_tracing, Metrics};
 
 fn orchestrator_config_from_swarm(
@@ -51,6 +57,35 @@ fn orchestrator_config_from_swarm(
         default_task_timeout: (config.default_task_timeout_secs != 0)
             .then(|| std::time::Duration::from_secs(config.default_task_timeout_secs)),
         max_concurrent_tasks: config.max_concurrent_tasks,
+    }
+}
+
+fn provider_routing_strategy_from_config(
+    strategy: ConfigProviderRoutingStrategy,
+) -> RoutingStrategy {
+    match strategy {
+        ConfigProviderRoutingStrategy::CapabilityMatch => RoutingStrategy::CapabilityMatch,
+        ConfigProviderRoutingStrategy::LowestCost => RoutingStrategy::LowestCost,
+        ConfigProviderRoutingStrategy::LowestLatency => RoutingStrategy::LowestLatency,
+        ConfigProviderRoutingStrategy::RoundRobin => RoutingStrategy::RoundRobin,
+    }
+}
+
+fn cost_preference_from_config(preference: ConfigRoutingCostPreference) -> CostPreference {
+    match preference {
+        ConfigRoutingCostPreference::Cheapest => CostPreference::Cheapest,
+        ConfigRoutingCostPreference::Balanced => CostPreference::Balanced,
+        ConfigRoutingCostPreference::BestQuality => CostPreference::BestQuality,
+    }
+}
+
+fn latency_preference_from_config(
+    preference: ConfigRoutingLatencyPreference,
+) -> LatencyPreference {
+    match preference {
+        ConfigRoutingLatencyPreference::Fastest => LatencyPreference::Fastest,
+        ConfigRoutingLatencyPreference::Balanced => LatencyPreference::Balanced,
+        ConfigRoutingLatencyPreference::NoPreference => LatencyPreference::NoPreference,
     }
 }
 
@@ -362,6 +397,18 @@ async fn main() -> anyhow::Result<()> {
         .with_learning_strategy(execution_template_strategy)
         .with_learning_scope(LearningScope::Global)
         .with_provider_registry(provider_registry.clone())
+        .with_provider_routing_strategy(provider_routing_strategy_from_config(
+            config.providers.routing.strategy,
+        ))
+        .with_provider_routing_options(ProviderRoutingOptions {
+            fallback_allowed: config.providers.routing.fallback_allowed,
+            require_healthy: config.providers.require_healthy,
+            cost_preference: cost_preference_from_config(config.providers.routing.cost_preference),
+            latency_preference: latency_preference_from_config(
+                config.providers.routing.latency_preference,
+            ),
+            ..ProviderRoutingOptions::default()
+        })
         .with_default_personality(PersonalityProfile::new("Enterprise Base", "1.0.0"));
 
     println!("── Submitting Tasks ────────────────────────────");

@@ -21,4 +21,4 @@ pub mod runner;
 
 pub use circuit_breaker::{CircuitBreaker, CircuitState};
 pub use retry::RetryExecutor;
-pub use runner::{TaskExecutionContext, TaskRunner};
+pub use runner::{ProviderRoutingOptions, TaskExecutionContext, TaskRunner};

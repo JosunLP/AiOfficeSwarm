@@ -7,6 +7,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::sync::{
     atomic::{AtomicUsize, Ordering as AtomicOrdering},
     Arc,
@@ -82,6 +83,8 @@ pub struct RoutingContext {
     pub blocklist: Vec<PluginId>,
     /// Whether fallback to another provider is permitted on failure.
     pub fallback_allowed: bool,
+    /// Whether unhealthy providers should be excluded from routing decisions.
+    pub require_healthy: bool,
 }
 
 impl Default for RoutingContext {
@@ -96,6 +99,7 @@ impl Default for RoutingContext {
             allowlist: Vec::new(),
             blocklist: Vec::new(),
             fallback_allowed: true,
+            require_healthy: false,
         }
     }
 }
@@ -199,20 +203,144 @@ fn sort_by_numeric_hint(
     });
 }
 
-fn finalize_decision(
+fn compare_numeric_hint(
+    a: &Arc<dyn ModelProvider>,
+    b: &Arc<dyn ModelProvider>,
+    key: &str,
+    descending: bool,
+) -> Ordering {
+    match (numeric_hint(a, key), numeric_hint(b, key)) {
+        (Some(a_score), Some(b_score)) => {
+            if descending {
+                b_score.partial_cmp(&a_score)
+            } else {
+                a_score.partial_cmp(&b_score)
+            }
+            .unwrap_or(Ordering::Equal)
+        }
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+fn sort_capability_match_candidates(
+    candidates: &mut [Arc<dyn ModelProvider>],
+    ctx: &RoutingContext,
+) {
+    candidates.sort_by(|a, b| {
+        let a_model = provider_matches_model(a, ctx.preferred_model.as_deref());
+        let b_model = provider_matches_model(b, ctx.preferred_model.as_deref());
+        b_model
+            .cmp(&a_model)
+            .then_with(|| match ctx.cost_preference {
+                CostPreference::Cheapest => {
+                    compare_numeric_hint(a, b, "estimated_cost_per_1k_tokens", false)
+                }
+                CostPreference::BestQuality => compare_numeric_hint(a, b, "quality_tier", true),
+                CostPreference::Balanced => Ordering::Equal,
+            })
+            .then_with(|| match ctx.latency_preference {
+                LatencyPreference::Fastest => compare_numeric_hint(a, b, "observed_latency_ms", false),
+                LatencyPreference::Balanced | LatencyPreference::NoPreference => Ordering::Equal,
+            })
+            .then_with(|| a.name().cmp(b.name()))
+    });
+}
+
+fn normalized_string_set(value: &serde_json::Value) -> HashSet<String> {
+    match value {
+        serde_json::Value::String(raw) => raw
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_ascii_lowercase())
+            .collect(),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_ascii_lowercase())
+            .collect(),
+        _ => HashSet::new(),
+    }
+}
+
+fn provider_custom_string_set(provider: &Arc<dyn ModelProvider>, keys: &[&str]) -> HashSet<String> {
+    let capabilities = provider.capabilities();
+    keys.iter()
+        .find_map(|key| capabilities.custom.get(*key).map(normalized_string_set))
+        .unwrap_or_default()
+}
+
+fn provider_meets_compliance(
+    provider: &Arc<dyn ModelProvider>,
+    requirements: &[ComplianceRequirement],
+) -> bool {
+    if requirements.is_empty() {
+        return true;
+    }
+
+    let supported = provider_custom_string_set(provider, &["compliance_standards", "compliance"]);
+    if supported.is_empty() {
+        return false;
+    }
+
+    requirements.iter().all(|requirement| {
+        supported.contains(&requirement.standard.trim().to_ascii_lowercase())
+    })
+}
+
+fn provider_matches_data_locality(
+    provider: &Arc<dyn ModelProvider>,
+    data_locality: &DataLocality,
+) -> bool {
+    if data_locality.allowed_regions.is_empty() {
+        return true;
+    }
+
+    let supported_regions = provider_custom_string_set(provider, &["regions", "region"]);
+    if supported_regions.is_empty() {
+        return !data_locality.strict;
+    }
+
+    data_locality
+        .allowed_regions
+        .iter()
+        .map(|region| region.trim().to_ascii_lowercase())
+        .any(|region| supported_regions.contains(&region))
+}
+
+async fn finalize_decision(
     mut candidates: Vec<Arc<dyn ModelProvider>>,
-    fallback_allowed: bool,
+    ctx: &RoutingContext,
 ) -> SwarmResult<RoutingDecision> {
+    if ctx.require_healthy {
+        let mut healthy_candidates = Vec::with_capacity(candidates.len());
+        for provider in candidates {
+            match provider.health_check().await {
+                Ok(health) if health.healthy => healthy_candidates.push(provider),
+                Ok(_) | Err(_) => {}
+            }
+        }
+        candidates = healthy_candidates;
+    }
+
     if candidates.is_empty() {
-        return Err(SwarmError::Internal {
-            reason: "No provider matches the routing requirements".into(),
+        return Err(SwarmError::ProviderRoutingFailed {
+            reason: if ctx.require_healthy {
+                "no healthy provider matches the routing requirements".into()
+            } else {
+                "no provider matches the routing requirements".into()
+            },
         });
     }
 
     let primary = candidates.remove(0);
     Ok(RoutingDecision {
         provider: primary,
-        fallbacks: if fallback_allowed {
+        fallbacks: if ctx.fallback_allowed {
             candidates
         } else {
             Vec::new()
@@ -223,7 +351,7 @@ fn finalize_decision(
 fn candidate_providers(
     registry: &ProviderRegistry,
     ctx: &RoutingContext,
-) -> Vec<Arc<dyn ModelProvider>> {
+) -> SwarmResult<Vec<Arc<dyn ModelProvider>>> {
     let mut candidates = registry.find_by_capabilities(&ctx.required_capabilities);
 
     if !ctx.allowlist.is_empty() {
@@ -240,11 +368,72 @@ fn candidate_providers(
             .cloned()
             .collect();
         if !preferred.is_empty() {
-            return preferred;
+            candidates = preferred;
         }
     }
 
-    candidates
+    if let Some(data_locality) = &ctx.data_locality {
+        let localized: Vec<_> = candidates
+            .iter()
+            .filter(|provider| provider_matches_data_locality(provider, data_locality))
+            .cloned()
+            .collect();
+
+        if data_locality.strict {
+            if localized.is_empty() {
+                return Err(SwarmError::ComplianceBoundaryViolation {
+                    reason: format!(
+                        "no provider satisfies the required data locality: {}",
+                        data_locality.allowed_regions.join(", ")
+                    ),
+                });
+            }
+            candidates = localized;
+        } else if !localized.is_empty() {
+            candidates = localized;
+        }
+    }
+
+    let mandatory_compliance: Vec<_> = ctx
+        .compliance
+        .iter()
+        .filter(|requirement| requirement.mandatory)
+        .cloned()
+        .collect();
+    if !mandatory_compliance.is_empty() {
+        candidates.retain(|provider| provider_meets_compliance(provider, &mandatory_compliance));
+        if candidates.is_empty() {
+            return Err(SwarmError::ComplianceBoundaryViolation {
+                reason: format!(
+                    "no provider satisfies mandatory compliance requirements: {}",
+                    mandatory_compliance
+                        .iter()
+                        .map(|requirement| requirement.standard.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            });
+        }
+    }
+
+    let advisory_compliance: Vec<_> = ctx
+        .compliance
+        .iter()
+        .filter(|requirement| !requirement.mandatory)
+        .cloned()
+        .collect();
+    if !advisory_compliance.is_empty() {
+        let preferred: Vec<_> = candidates
+            .iter()
+            .filter(|provider| provider_meets_compliance(provider, &advisory_compliance))
+            .cloned()
+            .collect();
+        if !preferred.is_empty() {
+            candidates = preferred;
+        }
+    }
+
+    Ok(candidates)
 }
 
 /// A simple router that selects providers based on capability matching.
@@ -262,10 +451,9 @@ impl<'a> CapabilityMatchRouter<'a> {
 #[async_trait]
 impl ProviderRouter for CapabilityMatchRouter<'_> {
     async fn route(&self, ctx: &RoutingContext) -> SwarmResult<RoutingDecision> {
-        finalize_decision(
-            candidate_providers(self.registry, ctx),
-            ctx.fallback_allowed,
-        )
+        let mut candidates = candidate_providers(self.registry, ctx)?;
+        sort_capability_match_candidates(&mut candidates, ctx);
+        finalize_decision(candidates, ctx).await
     }
 }
 
@@ -284,14 +472,14 @@ impl<'a> LowestCostRouter<'a> {
 #[async_trait]
 impl ProviderRouter for LowestCostRouter<'_> {
     async fn route(&self, ctx: &RoutingContext) -> SwarmResult<RoutingDecision> {
-        let mut candidates = candidate_providers(self.registry, ctx);
+        let mut candidates = candidate_providers(self.registry, ctx)?;
         sort_by_numeric_hint(
             &mut candidates,
             ctx.preferred_model.as_deref(),
             "estimated_cost_per_1k_tokens",
             false,
         );
-        finalize_decision(candidates, ctx.fallback_allowed)
+        finalize_decision(candidates, ctx).await
     }
 }
 
@@ -310,14 +498,14 @@ impl<'a> LowestLatencyRouter<'a> {
 #[async_trait]
 impl ProviderRouter for LowestLatencyRouter<'_> {
     async fn route(&self, ctx: &RoutingContext) -> SwarmResult<RoutingDecision> {
-        let mut candidates = candidate_providers(self.registry, ctx);
+        let mut candidates = candidate_providers(self.registry, ctx)?;
         sort_by_numeric_hint(
             &mut candidates,
             ctx.preferred_model.as_deref(),
             "observed_latency_ms",
             false,
         );
-        finalize_decision(candidates, ctx.fallback_allowed)
+        finalize_decision(candidates, ctx).await
     }
 }
 
@@ -340,14 +528,14 @@ impl<'a> RoundRobinRouter<'a> {
 #[async_trait]
 impl ProviderRouter for RoundRobinRouter<'_> {
     async fn route(&self, ctx: &RoutingContext) -> SwarmResult<RoutingDecision> {
-        let mut candidates = candidate_providers(self.registry, ctx);
+        let mut candidates = candidate_providers(self.registry, ctx)?;
         if candidates.is_empty() {
-            return finalize_decision(candidates, ctx.fallback_allowed);
+            return finalize_decision(candidates, ctx).await;
         }
 
         let index = self.cursor.fetch_add(1, AtomicOrdering::Relaxed) % candidates.len();
         candidates.rotate_left(index);
-        finalize_decision(candidates, ctx.fallback_allowed)
+        finalize_decision(candidates, ctx).await
     }
 }
 
@@ -386,16 +574,16 @@ impl ProviderRouter for StrategyRouter<'_> {
                 LowestLatencyRouter::new(self.registry).route(ctx).await
             }
             RoutingStrategy::RoundRobin => {
-                let mut candidates = candidate_providers(self.registry, ctx);
+                let mut candidates = candidate_providers(self.registry, ctx)?;
                 if candidates.is_empty() {
-                    return finalize_decision(candidates, ctx.fallback_allowed);
+                    return finalize_decision(candidates, ctx).await;
                 }
                 let index = self
                     .round_robin_cursor
                     .fetch_add(1, AtomicOrdering::Relaxed)
                     % candidates.len();
                 candidates.rotate_left(index);
-                finalize_decision(candidates, ctx.fallback_allowed)
+                finalize_decision(candidates, ctx).await
             }
         }
     }
@@ -404,6 +592,8 @@ impl ProviderRouter for StrategyRouter<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
     use crate::{
         request::{ChatRequest, EmbeddingRequest},
         response::{ChatResponse, EmbeddingResponse},
@@ -415,10 +605,29 @@ mod tests {
         id: PluginId,
         name: &'static str,
         capabilities: ProviderCapabilities,
+        healthy: bool,
     }
 
     impl TestProvider {
         fn new(name: &'static str, cost: f64, latency_ms: f64, model_id: &str) -> Self {
+            Self::with_metadata(name, cost, latency_ms, model_id, true, HashMap::new())
+        }
+
+        fn with_metadata(
+            name: &'static str,
+            cost: f64,
+            latency_ms: f64,
+            model_id: &str,
+            healthy: bool,
+            mut custom: HashMap<String, serde_json::Value>,
+        ) -> Self {
+            custom
+                .entry("estimated_cost_per_1k_tokens".into())
+                .or_insert_with(|| serde_json::json!(cost));
+            custom
+                .entry("observed_latency_ms".into())
+                .or_insert_with(|| serde_json::json!(latency_ms));
+
             Self {
                 id: PluginId::new(),
                 name,
@@ -435,17 +644,10 @@ mod tests {
                         supports_json_mode: true,
                         is_reasoning_model: false,
                     }],
-                    custom: [
-                        (
-                            "estimated_cost_per_1k_tokens".into(),
-                            serde_json::json!(cost),
-                        ),
-                        ("observed_latency_ms".into(), serde_json::json!(latency_ms)),
-                    ]
-                    .into_iter()
-                    .collect(),
+                    custom,
                     ..Default::default()
                 },
+                healthy,
             }
         }
     }
@@ -493,9 +695,14 @@ mod tests {
 
         async fn health_check(&self) -> SwarmResult<ProviderHealth> {
             Ok(ProviderHealth {
-                healthy: true,
-                latency_ms: None,
-                message: None,
+                healthy: self.healthy,
+                latency_ms: self
+                    .capabilities
+                    .custom
+                    .get("observed_latency_ms")
+                    .and_then(serde_json::Value::as_f64)
+                    .map(|latency| latency as u64),
+                message: Some(format!("{} health", self.name)),
             })
         }
     }
@@ -528,6 +735,7 @@ mod tests {
     fn routing_context_defaults() {
         let ctx = RoutingContext::default();
         assert!(ctx.fallback_allowed);
+        assert!(!ctx.require_healthy);
         assert!(ctx.allowlist.is_empty());
         assert!(ctx.blocklist.is_empty());
     }
@@ -586,5 +794,120 @@ mod tests {
         let decision = router.route(&ctx).await.unwrap();
 
         assert_eq!(decision.provider.name(), "fast");
+    }
+
+    #[tokio::test]
+    async fn capability_match_router_uses_cost_and_latency_preferences() {
+        let registry = seeded_registry();
+        let router = CapabilityMatchRouter::new(&registry);
+        let ctx = RoutingContext {
+            cost_preference: CostPreference::Cheapest,
+            latency_preference: LatencyPreference::Fastest,
+            ..RoutingContext::default()
+        };
+
+        let decision = router.route(&ctx).await.unwrap();
+
+        assert_eq!(decision.provider.name(), "cheap");
+    }
+
+    #[tokio::test]
+    async fn advisory_compliance_prefers_matching_provider() {
+        let registry = ProviderRegistry::new();
+        registry
+            .register(Arc::new(TestProvider::with_metadata(
+                "compliant",
+                1.0,
+                100.0,
+                "gpt-compliant",
+                true,
+                HashMap::from([(
+                    "compliance_standards".into(),
+                    serde_json::json!(["SOC2", "GDPR"]),
+                )]),
+            )))
+            .unwrap();
+        registry
+            .register(Arc::new(TestProvider::new(
+                "generic",
+                0.8,
+                90.0,
+                "gpt-generic",
+            )))
+            .unwrap();
+
+        let decision = CapabilityMatchRouter::new(&registry)
+            .route(&RoutingContext {
+                compliance: vec![ComplianceRequirement {
+                    standard: "soc2".into(),
+                    mandatory: false,
+                }],
+                ..RoutingContext::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(decision.provider.name(), "compliant");
+    }
+
+    #[tokio::test]
+    async fn strict_data_locality_rejects_out_of_region_providers() {
+        let registry = ProviderRegistry::new();
+        registry
+            .register(Arc::new(TestProvider::with_metadata(
+                "us-only",
+                1.0,
+                100.0,
+                "gpt-us",
+                true,
+                HashMap::from([("regions".into(), serde_json::json!(["us-east-1"]))]),
+            )))
+            .unwrap();
+
+        let err = CapabilityMatchRouter::new(&registry)
+            .route(&RoutingContext {
+                data_locality: Some(DataLocality {
+                    allowed_regions: vec!["eu-west-1".into()],
+                    strict: true,
+                }),
+                ..RoutingContext::default()
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, SwarmError::ComplianceBoundaryViolation { .. }));
+    }
+
+    #[tokio::test]
+    async fn require_healthy_filters_unhealthy_providers() {
+        let registry = ProviderRegistry::new();
+        registry
+            .register(Arc::new(TestProvider::with_metadata(
+                "unhealthy-cheap",
+                0.1,
+                100.0,
+                "gpt-cheap",
+                false,
+                HashMap::new(),
+            )))
+            .unwrap();
+        registry
+            .register(Arc::new(TestProvider::new(
+                "healthy-fallback",
+                1.0,
+                120.0,
+                "gpt-healthy",
+            )))
+            .unwrap();
+
+        let decision = LowestCostRouter::new(&registry)
+            .route(&RoutingContext {
+                require_healthy: true,
+                ..RoutingContext::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(decision.provider.name(), "healthy-fallback");
     }
 }
