@@ -536,7 +536,47 @@ impl TaskRunner {
             } else {
                 match provider.health_check().await {
                     Ok(health) if health.healthy => provider,
-                    Ok(_) | Err(_) => {
+                    Ok(health) => {
+                        tracing::warn!(
+                            provider = provider.name(),
+                            message = health
+                                .message
+                                .as_deref()
+                                .unwrap_or("provider reported unhealthy"),
+                            "preferred provider failed health requirement; falling back to router"
+                        );
+                        let router = StrategyRouter::new(
+                            self.execution_context.provider_routing_strategy,
+                            registry,
+                        );
+                        let decision = router
+                            .route(&RoutingContext {
+                                required_capabilities,
+                                preferred_model: preferred_model.clone(),
+                                cost_preference: routing_options.cost_preference,
+                                latency_preference: routing_options.latency_preference,
+                                compliance: routing_options.compliance.clone(),
+                                data_locality: routing_options.data_locality.clone(),
+                                allowlist,
+                                blocklist,
+                                fallback_allowed: routing_options.fallback_allowed,
+                                require_healthy: routing_options.require_healthy,
+                            })
+                            .await?;
+                        if let Some(fallback) = decision.fallbacks.first() {
+                            self.handle.publish_event(EventKind::ProviderFailover {
+                                from_provider: decision.provider.name().to_string(),
+                                to_provider: fallback.name().to_string(),
+                            });
+                        }
+                        decision.provider
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            provider = provider.name(),
+                            error = %error,
+                            "preferred provider health check failed; falling back to router"
+                        );
                         let router = StrategyRouter::new(
                             self.execution_context.provider_routing_strategy,
                             registry,
