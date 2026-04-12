@@ -4,6 +4,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::scope::LearningScope;
+
+fn default_learning_scope() -> LearningScope {
+    LearningScope::Global
+}
+
 /// A unique identifier for a learning output / learning rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LearningRuleId(Uuid);
@@ -94,6 +100,9 @@ pub struct LearningOutput {
     pub category: LearningCategory,
     /// Human-readable description of what was learned.
     pub description: String,
+    /// The primary learning scope this output belongs to.
+    #[serde(default = "default_learning_scope")]
+    pub scope: LearningScope,
     /// The agent that this learning applies to (if agent-scoped).
     pub agent_id: Option<String>,
     /// The tenant this learning belongs to.
@@ -123,6 +132,7 @@ impl LearningOutput {
             id: LearningRuleId::new(),
             category,
             description: description.into(),
+            scope: LearningScope::Global,
             agent_id: None,
             tenant_id: None,
             context: serde_json::Value::Null,
@@ -145,6 +155,7 @@ impl LearningOutput {
             id: LearningRuleId::new(),
             category,
             description: description.into(),
+            scope: LearningScope::Global,
             agent_id: None,
             tenant_id: None,
             context,
@@ -153,6 +164,22 @@ impl LearningOutput {
             status: LearningStatus::PendingApproval,
             created_at: Utc::now(),
             applied_at: None,
+        }
+    }
+
+    /// Set the primary scope for this output.
+    pub fn set_scope(&mut self, scope: LearningScope) {
+        self.scope = scope;
+    }
+
+    /// Return a stable human-readable scope label.
+    pub fn scope_label(&self) -> String {
+        match &self.scope {
+            LearningScope::Agent { agent_id } => format!("agent:{agent_id}"),
+            LearningScope::Team { team_id } => format!("team:{team_id}"),
+            LearningScope::Tenant { tenant_id } => format!("tenant:{tenant_id}"),
+            LearningScope::Workflow { workflow_id } => format!("workflow:{workflow_id}"),
+            LearningScope::Global => "global".into(),
         }
     }
 }
@@ -226,5 +253,19 @@ mod tests {
         );
         assert!(output.requires_approval);
         assert_eq!(output.status, LearningStatus::PendingApproval);
+    }
+
+    #[test]
+    fn scope_label_uses_primary_scope() {
+        let mut output = LearningOutput::auto(
+            LearningCategory::PatternExtraction,
+            "Capture workflow pattern",
+            serde_json::json!({"ok": true}),
+        );
+        output.set_scope(LearningScope::Workflow {
+            workflow_id: "intake".into(),
+        });
+
+        assert_eq!(output.scope_label(), "workflow:intake");
     }
 }

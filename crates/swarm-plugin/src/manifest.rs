@@ -72,7 +72,7 @@ pub struct PluginAction {
 /// These are _separate_ from the framework-level RBAC permissions stored in
 /// [`PluginManifest::required_permissions`], which control what actions the
 /// plugin may perform inside the swarm.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value")]
 pub enum WasmPermission {
     /// Outbound network access to a host/CIDR (e.g. `"api.example.com:443"`).

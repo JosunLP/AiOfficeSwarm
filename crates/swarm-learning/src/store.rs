@@ -12,13 +12,29 @@ use crate::output::{LearningOutput, LearningRuleId, LearningStatus};
 use crate::scope::LearningScope;
 
 fn scope_matches(output: &LearningOutput, scope: &LearningScope) -> bool {
+    if matches!(scope, LearningScope::Global) {
+        return true;
+    }
+
+    if &output.scope == scope {
+        return true;
+    }
+
+    // Backward compatibility for records written before `LearningOutput.scope`
+    // existed: legacy agent/tenant identifiers are only consulted when the
+    // stored primary scope still reads as the default global value.
     match scope {
-        LearningScope::Agent { agent_id } => output.agent_id.as_deref() == Some(agent_id.as_str()),
-        LearningScope::Tenant { tenant_id } => {
-            output.tenant_id.as_deref() == Some(tenant_id.as_str())
+        LearningScope::Agent { agent_id } => {
+            matches!(output.scope, LearningScope::Global)
+                && output.agent_id.as_deref() == Some(agent_id.as_str())
         }
-        LearningScope::Global => true,
-        LearningScope::Team { .. } | LearningScope::Workflow { .. } => true,
+        LearningScope::Tenant { tenant_id } => {
+            matches!(output.scope, LearningScope::Global)
+                && output.tenant_id.as_deref() == Some(tenant_id.as_str())
+        }
+        LearningScope::Team { .. } | LearningScope::Workflow { .. } | LearningScope::Global => {
+            false
+        }
     }
 }
 
@@ -446,5 +462,50 @@ mod tests {
         assert_eq!(approved.status, LearningStatus::Applied);
 
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn filters_team_and_workflow_outputs_by_primary_scope() {
+        let store = InMemoryLearningStore::new();
+
+        let mut team_output = LearningOutput::requires_review(
+            LearningCategory::PatternExtraction,
+            "Persist team pattern",
+            serde_json::json!({"task_count": 3}),
+            serde_json::json!({"source": "team-run"}),
+        );
+        team_output.set_scope(LearningScope::Team {
+            team_id: "team-a".into(),
+        });
+        store.record(team_output).await.unwrap();
+
+        let mut workflow_output = LearningOutput::requires_review(
+            LearningCategory::PlanTemplate,
+            "Persist workflow template",
+            serde_json::json!({"steps": 4}),
+            serde_json::json!({"source": "workflow-run"}),
+        );
+        workflow_output.set_scope(LearningScope::Workflow {
+            workflow_id: "workflow-a".into(),
+        });
+        store.record(workflow_output).await.unwrap();
+
+        let team_pending = store
+            .list_pending_approvals(&LearningScope::Team {
+                team_id: "team-a".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(team_pending.len(), 1);
+        assert_eq!(team_pending[0].scope.label(), "team");
+
+        let workflow_pending = store
+            .list_pending_approvals(&LearningScope::Workflow {
+                workflow_id: "workflow-a".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(workflow_pending.len(), 1);
+        assert_eq!(workflow_pending[0].scope.label(), "workflow");
     }
 }

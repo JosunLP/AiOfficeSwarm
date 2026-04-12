@@ -767,6 +767,9 @@ impl TaskRunner {
                         }),
                     )
                 };
+                if let Some(scope) = self.execution_context.learning_scope.clone() {
+                    learning_output.set_scope(scope);
+                }
                 learning_output.agent_id = Some(descriptor.id.to_string());
                 learning_output.tenant_id = role_spec.as_ref().and_then(|spec| {
                     spec.metadata
@@ -774,6 +777,15 @@ impl TaskRunner {
                         .get("tenant_id")
                         .and_then(|value| value.as_str().map(ToOwned::to_owned))
                 });
+                // When no explicit runtime scope is configured, preserve the
+                // pre-existing agent/tenant behavior as the primary scope.
+                if matches!(learning_output.scope, LearningScope::Global) {
+                    if let Some(tenant_id) = learning_output.tenant_id.clone() {
+                        learning_output.set_scope(LearningScope::Tenant { tenant_id });
+                    } else if let Some(agent_id) = learning_output.agent_id.clone() {
+                        learning_output.set_scope(LearningScope::Agent { agent_id });
+                    }
+                }
                 learning_store.record(learning_output.clone()).await?;
                 self.handle
                     .publish_event(EventKind::LearningOutputProduced {
@@ -1233,6 +1245,9 @@ mod tests {
                 .with_role_registry(role_registry)
                 .with_memory_backend(Arc::clone(&memory_backend))
                 .with_learning_store(learning_store.clone())
+                .with_learning_scope(LearningScope::Team {
+                    team_id: "support-ops".into(),
+                })
                 .with_provider_registry(provider_registry)
                 .with_default_personality(PersonalityProfile::new("Base", "1.0.0")),
         );
@@ -1253,11 +1268,19 @@ mod tests {
         assert!(stored_entries.len() >= 2);
 
         let pending = learning_store
-            .list_pending_approvals(&LearningScope::Global)
+            .list_pending_approvals(&LearningScope::Team {
+                team_id: "support-ops".into(),
+            })
             .await
             .unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].status, LearningStatus::PendingApproval);
+        assert_eq!(
+            pending[0].scope,
+            LearningScope::Team {
+                team_id: "support-ops".into(),
+            }
+        );
     }
 
     #[tokio::test]

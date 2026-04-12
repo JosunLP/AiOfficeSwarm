@@ -115,13 +115,7 @@ fn parse_learning_rule_id(id: &str) -> anyhow::Result<LearningRuleId> {
 }
 
 fn learning_scope_label(output: &LearningOutput) -> String {
-    if let Some(agent_id) = output.agent_id.as_deref() {
-        format!("agent:{agent_id}")
-    } else if let Some(tenant_id) = output.tenant_id.as_deref() {
-        format!("tenant:{tenant_id}")
-    } else {
-        "global".into()
-    }
+    output.scope_label()
 }
 
 fn print_learning_output_text(output: &LearningOutput) -> anyhow::Result<()> {
@@ -184,11 +178,12 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
                     );
                     for output in pending {
                         println!(
-                            "  - {} [{}] {} {}",
+                            "  - {} [{}] {} {} ({})",
                             output.id,
                             output.status.label(),
                             output.category.label(),
-                            output.description
+                            output.description,
+                            output.scope_label()
                         );
                     }
                 }
@@ -278,9 +273,24 @@ mod tests {
             "Test",
             serde_json::json!({}),
         );
-        output.agent_id = Some("agent-1".into());
-        output.tenant_id = Some("tenant-1".into());
+        output.set_scope(LearningScope::Agent {
+            agent_id: "agent-1".into(),
+        });
 
         assert_eq!(learning_scope_label(&output), "agent:agent-1");
+    }
+
+    #[test]
+    fn learning_scope_label_supports_team_scope() {
+        let mut output = LearningOutput::auto(
+            swarm_learning::output::LearningCategory::PreferenceAdaptation,
+            "Test",
+            serde_json::json!({}),
+        );
+        output.set_scope(LearningScope::Team {
+            team_id: "ops".into(),
+        });
+
+        assert_eq!(learning_scope_label(&output), "team:ops");
     }
 }

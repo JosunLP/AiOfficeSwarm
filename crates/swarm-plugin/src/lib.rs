@@ -31,9 +31,9 @@
 //! ## Security
 //! Plugins may declare framework-level permissions in their manifest via
 //! [`PluginManifest::required_permissions`] and, for WASM plugins, OS-level
-//! sandbox permissions via [`manifest::WasmPermission`]. The current
-//! [`PluginHost`] manages lifecycle and invocation routing, while policy/RBAC
-//! enforcement must be integrated by the host application around those calls.
+//! sandbox permissions via [`manifest::WasmPermission`]. [`PluginHost`] can
+//! enforce explicit host-side allow-lists for those declarations at load time,
+//! while action-level policy/RBAC enforcement still belongs around host calls.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::all)]
@@ -49,7 +49,7 @@ pub mod wasm_manifest;
 #[cfg(feature = "wasm")]
 pub mod wasm_loader;
 
-pub use host::PluginHost;
+pub use host::{PluginHost, PluginPermissionPolicy};
 pub use lifecycle::{PluginLifecycleEvent, PluginState};
 pub use manifest::{PluginCapabilityKind, PluginManifest, WasmPermission};
 pub use registry::PluginRegistry;
