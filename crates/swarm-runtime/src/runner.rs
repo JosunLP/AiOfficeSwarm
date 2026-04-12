@@ -32,12 +32,42 @@ use swarm_orchestrator::OrchestratorHandle;
 use swarm_personality::{PersonalityId, PersonalityProfile, PersonalityRegistry};
 use swarm_policy::PolicyEngine;
 use swarm_provider::{
-    ProviderCapabilities, ProviderRegistry, ProviderRouter, RoutingContext, RoutingStrategy,
-    StrategyRouter,
+    ComplianceRequirement, CostPreference, DataLocality, LatencyPreference, ProviderCapabilities,
+    ProviderRegistry, ProviderRouter, RoutingContext, RoutingStrategy, StrategyRouter,
 };
 use swarm_role::{personality_bridge, RoleRegistry, RoleSpec};
 
 use crate::circuit_breaker::CircuitBreaker;
+
+/// Runtime controls for provider routing decisions.
+#[derive(Debug, Clone)]
+pub struct ProviderRoutingOptions {
+    /// Whether fallback providers may be selected automatically.
+    pub fallback_allowed: bool,
+    /// Whether unhealthy providers should be excluded from selection.
+    pub require_healthy: bool,
+    /// Cost preference applied during routing.
+    pub cost_preference: CostPreference,
+    /// Latency preference applied during routing.
+    pub latency_preference: LatencyPreference,
+    /// Compliance requirements that must or should influence routing.
+    pub compliance: Vec<ComplianceRequirement>,
+    /// Optional data-locality requirement for routing.
+    pub data_locality: Option<DataLocality>,
+}
+
+impl Default for ProviderRoutingOptions {
+    fn default() -> Self {
+        Self {
+            fallback_allowed: true,
+            require_healthy: false,
+            cost_preference: CostPreference::default(),
+            latency_preference: LatencyPreference::default(),
+            compliance: Vec::new(),
+            data_locality: None,
+        }
+    }
+}
 
 /// Optional runtime integrations that enrich task execution with enterprise
 /// context such as policy checks, role-aware personality overlays, memory
@@ -53,6 +83,7 @@ pub struct TaskExecutionContext {
     learning_strategies: Vec<Arc<dyn LearningStrategy>>,
     provider_registry: Option<Arc<ProviderRegistry>>,
     provider_routing_strategy: RoutingStrategy,
+    provider_routing_options: ProviderRoutingOptions,
     learning_scope: Option<LearningScope>,
 }
 
@@ -117,6 +148,13 @@ impl TaskExecutionContext {
     /// Select the built-in provider routing strategy.
     pub fn with_provider_routing_strategy(mut self, strategy: RoutingStrategy) -> Self {
         self.provider_routing_strategy = strategy;
+        self
+    }
+
+    /// Attach provider-routing controls such as health requirements and
+    /// compliance or locality hints.
+    pub fn with_provider_routing_options(mut self, options: ProviderRoutingOptions) -> Self {
+        self.provider_routing_options = options;
         self
     }
 
@@ -455,6 +493,7 @@ impl TaskRunner {
         }
 
         let descriptor = self.agent.descriptor();
+        let routing_options = &self.execution_context.provider_routing_options;
         let preferred_provider_name = task
             .spec
             .metadata
@@ -474,24 +513,98 @@ impl TaskRunner {
             .allowlist
             .iter()
             .filter_map(|name| registry.id_by_name(name))
-            .collect();
+            .collect::<Vec<_>>();
         let blocklist = descriptor
             .provider_preferences
             .blocklist
             .iter()
             .filter_map(|name| registry.id_by_name(name))
-            .collect();
+            .collect::<Vec<_>>();
 
         let selected = preferred_provider_name
             .as_deref()
-            .and_then(|provider_name| {
-                registry
-                    .get_by_name(provider_name)
-                    .filter(|provider| provider.capabilities().satisfies(&required_capabilities))
+            .and_then(|provider_name| registry.get_by_name(provider_name))
+            .filter(|provider| provider.capabilities().satisfies(&required_capabilities))
+            .filter(|provider| {
+                (allowlist.is_empty() || allowlist.contains(&provider.id()))
+                    && !blocklist.contains(&provider.id())
             });
 
         let provider = if let Some(provider) = selected {
-            provider
+            if !routing_options.require_healthy {
+                provider
+            } else {
+                match provider.health_check().await {
+                    Ok(health) if health.healthy => provider,
+                    Ok(health) => {
+                        tracing::warn!(
+                            provider = provider.name(),
+                            message = health
+                                .message
+                                .as_deref()
+                                .unwrap_or("provider reported unhealthy"),
+                            "preferred provider failed health requirement; falling back to router"
+                        );
+                        let router = StrategyRouter::new(
+                            self.execution_context.provider_routing_strategy,
+                            registry,
+                        );
+                        let decision = router
+                            .route(&RoutingContext {
+                                required_capabilities,
+                                preferred_model: preferred_model.clone(),
+                                cost_preference: routing_options.cost_preference,
+                                latency_preference: routing_options.latency_preference,
+                                compliance: routing_options.compliance.clone(),
+                                data_locality: routing_options.data_locality.clone(),
+                                allowlist,
+                                blocklist,
+                                fallback_allowed: routing_options.fallback_allowed,
+                                require_healthy: routing_options.require_healthy,
+                            })
+                            .await?;
+                        if let Some(fallback) = decision.fallbacks.first() {
+                            self.handle.publish_event(EventKind::ProviderFailover {
+                                from_provider: decision.provider.name().to_string(),
+                                to_provider: fallback.name().to_string(),
+                            });
+                        }
+                        decision.provider
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            provider = provider.name(),
+                            error = %error,
+                            "preferred provider health check failed; falling back to router"
+                        );
+                        let router = StrategyRouter::new(
+                            self.execution_context.provider_routing_strategy,
+                            registry,
+                        );
+                        let decision = router
+                            .route(&RoutingContext {
+                                required_capabilities,
+                                preferred_model: preferred_model.clone(),
+                                cost_preference: routing_options.cost_preference,
+                                latency_preference: routing_options.latency_preference,
+                                compliance: routing_options.compliance.clone(),
+                                data_locality: routing_options.data_locality.clone(),
+                                allowlist,
+                                blocklist,
+                                fallback_allowed: routing_options.fallback_allowed,
+                                require_healthy: routing_options.require_healthy,
+                            })
+                            .await?;
+                        if let Some(fallback) = decision.fallbacks.first() {
+                            self.handle.publish_event(EventKind::ProviderFailover {
+                                from_provider: decision.provider.name().to_string(),
+                                to_provider: fallback.name().to_string(),
+                            });
+                        }
+                        decision.provider
+                    }
+                }
+            }
         } else {
             let router =
                 StrategyRouter::new(self.execution_context.provider_routing_strategy, registry);
@@ -499,10 +612,14 @@ impl TaskRunner {
                 .route(&RoutingContext {
                     required_capabilities,
                     preferred_model: preferred_model.clone(),
+                    cost_preference: routing_options.cost_preference,
+                    latency_preference: routing_options.latency_preference,
+                    compliance: routing_options.compliance.clone(),
+                    data_locality: routing_options.data_locality.clone(),
                     allowlist,
                     blocklist,
-                    fallback_allowed: true,
-                    ..RoutingContext::default()
+                    fallback_allowed: routing_options.fallback_allowed,
+                    require_healthy: routing_options.require_healthy,
                 })
                 .await?;
             if let Some(fallback) = decision.fallbacks.first() {
@@ -1036,6 +1153,8 @@ mod tests {
     }
     struct TestProvider {
         id: swarm_core::PluginId,
+        name: &'static str,
+        healthy: bool,
     }
 
     const VERY_SLOW_TASK_DURATION: Duration = Duration::from_secs(500);
@@ -1123,7 +1242,7 @@ mod tests {
         }
 
         fn name(&self) -> &str {
-            "test-provider"
+            self.name
         }
 
         fn capabilities(&self) -> ProviderCapabilities {
@@ -1150,7 +1269,7 @@ mod tests {
 
         async fn health_check(&self) -> SwarmResult<swarm_provider::traits::ProviderHealth> {
             Ok(swarm_provider::traits::ProviderHealth {
-                healthy: true,
+                healthy: self.healthy,
                 latency_ms: Some(10),
                 message: None,
             })
@@ -1372,6 +1491,8 @@ mod tests {
         provider_registry
             .register(Arc::new(TestProvider {
                 id: swarm_core::PluginId::new(),
+                name: "test-provider",
+                healthy: true,
             }))
             .unwrap();
 
@@ -1465,6 +1586,57 @@ mod tests {
             output.category == LearningCategory::PlanTemplate
                 && output.delta["template_name"] == serde_json::json!("t")
         }));
+    }
+
+    #[tokio::test]
+    async fn task_runner_skips_unhealthy_preferred_provider_when_required() {
+        let orch = Orchestrator::new();
+        let handle = orch.handle();
+        let provider_registry = Arc::new(ProviderRegistry::new());
+        provider_registry
+            .register(Arc::new(TestProvider {
+                id: swarm_core::PluginId::new(),
+                name: "unhealthy-provider",
+                healthy: false,
+            }))
+            .unwrap();
+        provider_registry
+            .register(Arc::new(TestProvider {
+                id: swarm_core::PluginId::new(),
+                name: "healthy-provider",
+                healthy: true,
+            }))
+            .unwrap();
+
+        let mut descriptor =
+            AgentDescriptor::new("context-worker", AgentKind::Worker, CapabilitySet::new());
+        descriptor.provider_preferences.preferred_provider = Some("unhealthy-provider".into());
+        let agent_id = descriptor.id;
+        let agent = ContextAwareAgent {
+            descriptor: descriptor.clone(),
+        };
+
+        handle.register_agent(descriptor).unwrap();
+        handle.set_agent_ready(agent_id).unwrap();
+
+        let task_id = handle
+            .submit_task(TaskSpec::new("t", serde_json::json!({"x": 1})))
+            .unwrap();
+        handle.try_schedule_next().unwrap();
+
+        let task = handle.get_task(&task_id).unwrap();
+        let mut runner = TaskRunner::new(Box::new(agent), handle).with_execution_context(
+            TaskExecutionContext::new()
+                .with_provider_registry(provider_registry)
+                .with_provider_routing_options(ProviderRoutingOptions {
+                    require_healthy: true,
+                    ..ProviderRoutingOptions::default()
+                }),
+        );
+
+        let output = runner.run_task(task).await.unwrap();
+
+        assert_eq!(output["provider"], "healthy-provider");
     }
 
     #[tokio::test]

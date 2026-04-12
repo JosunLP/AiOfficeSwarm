@@ -241,7 +241,7 @@ provider subsystems materially useful at runtime.
 
 Current limits remain explicit:
 
-- provider routing currently annotates execution context rather than invoking providers directly,
+- provider routing can now enforce health, compliance, locality, and fallback preferences but still annotates execution context rather than invoking providers directly,
 - orchestrator-level submit/schedule policy enforcement is still an embedding concern.
 
 The injected metadata includes keys such as:
