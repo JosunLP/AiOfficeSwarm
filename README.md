@@ -210,6 +210,7 @@ The CLI now exposes lightweight inspection commands for key enterprise concepts:
 - `swarm task submit --name triage --input '{"ticket":42}'` — persist a local task snapshot for operator workflows and integration testing.
 - `swarm task list` / `status <id>` / `cancel <id>` — inspect or update the local persistent task queue snapshot.
 - `swarm learning inspect` — show the effective learning governance baseline.
+- `swarm learning list --scope global --category plan_template` — inspect recorded learning outputs, including reusable learned templates.
 - `swarm learning pending --scope global` — inspect the persistent learning approval queue.
 - `swarm learning approve <id>` / `reject <id>` / `rollback <id>` — manage learning lifecycle decisions.
 - `swarm config --format json` — inspect the full effective configuration, including provider, memory, learning, plugin, and role settings.
@@ -232,6 +233,7 @@ When attached to a `TaskRunner`, the runtime can:
 - retrieve memory context into task metadata,
 - persist episodic execution memories,
 - capture learning outputs for approval queues,
+- run pluggable learning strategies to derive reusable execution templates,
 - annotate tasks with provider-routing selections.
 
 This keeps the public `Agent` trait stable while making the cognition and
