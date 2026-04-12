@@ -1,14 +1,19 @@
 //! `swarm task` sub-commands.
 
+use async_trait::async_trait;
 use clap::{Args, Subcommand};
+use serde::Serialize;
 use std::{str::FromStr, time::Duration};
 use swarm_config::SwarmConfig;
 use swarm_core::{
-    capability::Capability,
+    agent::{Agent, AgentDescriptor, AgentKind},
+    capability::{Capability, CapabilitySet},
+    error::SwarmResult,
     identity::TaskId,
-    task::{Task, TaskPriority, TaskSpec},
+    task::{Task, TaskPriority, TaskSpec, TaskStatus},
 };
-use swarm_orchestrator::{FileTaskStore, TaskStore};
+use swarm_orchestrator::{FileTaskStore, Orchestrator, TaskStore};
+use swarm_runtime::TaskRunner;
 
 /// Task management arguments.
 #[derive(Args)]
@@ -23,6 +28,8 @@ pub enum TaskSubcommand {
     List(TaskListArgs),
     /// Submit a new task into the local persistent task store.
     Submit(TaskSubmitArgs),
+    /// Process pending persisted tasks with built-in local workers.
+    Process(TaskProcessArgs),
     /// Show a single persisted task.
     Status(TaskStatusArgs),
     /// Cancel a pending persisted task.
@@ -61,6 +68,20 @@ pub struct TaskSubmitArgs {
     /// Timeout in seconds. Use 0 to disable the timeout.
     #[arg(long)]
     pub timeout_secs: Option<u64>,
+    /// Output format: text or json.
+    #[arg(short, long, default_value = "text")]
+    pub format: String,
+}
+
+/// Arguments for processing persisted tasks.
+#[derive(Args)]
+pub struct TaskProcessArgs {
+    /// Maximum number of pending tasks to process in this invocation.
+    #[arg(long)]
+    pub limit: Option<usize>,
+    /// Number of built-in local workers to register.
+    #[arg(long, default_value_t = 1)]
+    pub workers: usize,
     /// Output format: text or json.
     #[arg(short, long, default_value = "text")]
     pub format: String,
@@ -194,6 +215,220 @@ fn print_task_text(task: &Task) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn orchestrator_config_from_swarm(
+    config: &swarm_config::model::OrchestratorConfig,
+) -> swarm_orchestrator::OrchestratorConfig {
+    swarm_orchestrator::OrchestratorConfig {
+        event_channel_capacity: config.event_channel_capacity,
+        max_dispatch_per_tick: config.max_dispatch_per_tick,
+        default_task_timeout: (config.default_task_timeout_secs != 0)
+            .then(|| Duration::from_secs(config.default_task_timeout_secs)),
+        max_concurrent_tasks: config.max_concurrent_tasks,
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ProcessedTaskReport {
+    id: String,
+    name: String,
+    status: String,
+    worker: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TaskProcessSummary {
+    available_pending: usize,
+    attempted: usize,
+    processed: usize,
+    completed: usize,
+    failed: usize,
+    remaining_pending: usize,
+    worker_count: usize,
+    tasks: Vec<ProcessedTaskReport>,
+}
+
+struct BuiltInTaskWorker {
+    descriptor: AgentDescriptor,
+}
+
+#[async_trait]
+impl Agent for BuiltInTaskWorker {
+    fn descriptor(&self) -> &AgentDescriptor {
+        &self.descriptor
+    }
+
+    async fn execute(&mut self, task: Task) -> SwarmResult<serde_json::Value> {
+        let mut required_capabilities = task
+            .spec
+            .required_capabilities
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        required_capabilities.sort();
+
+        Ok(serde_json::json!({
+            "worker": self.descriptor.name,
+            "task": task.spec.name,
+            "input": task.spec.input,
+            "metadata": task.spec.metadata,
+            "required_capabilities": required_capabilities,
+            "status": "completed",
+        }))
+    }
+
+    async fn health_check(&self) -> SwarmResult<()> {
+        Ok(())
+    }
+}
+
+fn collect_pending_tasks(mut tasks: Vec<Task>, limit: Option<usize>) -> Vec<Task> {
+    tasks.retain(|task| matches!(task.status, TaskStatus::Pending));
+    tasks.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+    if let Some(limit) = limit {
+        tasks.truncate(limit);
+    }
+    tasks
+}
+
+fn combined_capabilities(tasks: &[Task]) -> CapabilitySet {
+    tasks
+        .iter()
+        .flat_map(|task| task.spec.required_capabilities.iter().cloned())
+        .collect()
+}
+
+fn print_process_summary_text(summary: &TaskProcessSummary) {
+    println!("Processed persisted tasks");
+    println!("  pending_available: {}", summary.available_pending);
+    println!("  attempted:         {}", summary.attempted);
+    println!("  processed:         {}", summary.processed);
+    println!("  completed:         {}", summary.completed);
+    println!("  failed:            {}", summary.failed);
+    println!("  remaining_pending: {}", summary.remaining_pending);
+    println!("  workers:           {}", summary.worker_count);
+    if !summary.tasks.is_empty() {
+        println!("  task_results:");
+        for task in &summary.tasks {
+            println!(
+                "    - {} [{}] {} via {}",
+                task.id, task.status, task.name, task.worker
+            );
+        }
+    }
+}
+
+async fn process_pending_tasks(
+    args: &TaskProcessArgs,
+    config: &SwarmConfig,
+) -> anyhow::Result<TaskProcessSummary> {
+    if args.workers == 0 {
+        anyhow::bail!("workers must be greater than zero");
+    }
+
+    let store = task_store(config);
+    let all_tasks = store.list().await?;
+    let available_pending = all_tasks
+        .iter()
+        .filter(|task| matches!(task.status, TaskStatus::Pending))
+        .count();
+    let pending_tasks = collect_pending_tasks(all_tasks, args.limit);
+
+    if pending_tasks.is_empty() {
+        return Ok(TaskProcessSummary {
+            available_pending,
+            attempted: 0,
+            processed: 0,
+            completed: 0,
+            failed: 0,
+            remaining_pending: available_pending,
+            worker_count: args.workers,
+            tasks: Vec::new(),
+        });
+    }
+
+    let worker_capabilities = combined_capabilities(&pending_tasks);
+    let orchestrator =
+        Orchestrator::with_config(orchestrator_config_from_swarm(&config.orchestrator));
+    let handle = orchestrator.handle();
+
+    let mut runners = Vec::with_capacity(args.workers);
+    for index in 0..args.workers {
+        let worker_name = format!("CLI-Worker-{}", index + 1);
+        let descriptor = AgentDescriptor::new(
+            worker_name.clone(),
+            AgentKind::Worker,
+            worker_capabilities.clone(),
+        );
+        handle.register_agent(descriptor.clone())?;
+        handle.set_agent_ready(descriptor.id)?;
+        runners.push((
+            worker_name,
+            TaskRunner::new(Box::new(BuiltInTaskWorker { descriptor }), handle.clone()),
+        ));
+    }
+
+    for task in &pending_tasks {
+        handle.import_task_snapshot(task.clone()).await?;
+    }
+
+    let mut tasks = Vec::new();
+    let mut completed = 0;
+    let mut failed = 0;
+
+    for _ in 0..pending_tasks.len() {
+        let Some(task_id) = handle.try_schedule_next().await? else {
+            break;
+        };
+
+        let scheduled_task = handle.get_task(&task_id)?;
+        let assigned_to = match scheduled_task.status {
+            TaskStatus::Scheduled { assigned_to } => assigned_to,
+            _ => anyhow::bail!("scheduled task {task_id} was not in the scheduled state"),
+        };
+
+        let (worker_name, runner) = runners
+            .iter_mut()
+            .find(|(_, runner)| runner.agent_id() == assigned_to)
+            .ok_or_else(|| anyhow::anyhow!("task {task_id} was assigned to unknown worker"))?;
+
+        match runner.run_task(scheduled_task).await {
+            Ok(_) => {
+                completed += 1;
+            }
+            Err(_) => {
+                failed += 1;
+            }
+        }
+
+        let updated_task = handle.get_task(&task_id)?;
+        store.record(updated_task.clone()).await?;
+        tasks.push(ProcessedTaskReport {
+            id: task_id.to_string(),
+            name: updated_task.spec.name.clone(),
+            status: updated_task.status.label().into(),
+            worker: worker_name.clone(),
+        });
+    }
+
+    let remaining_pending = store
+        .list()
+        .await?
+        .into_iter()
+        .filter(|task| matches!(task.status, TaskStatus::Pending))
+        .count();
+
+    Ok(TaskProcessSummary {
+        available_pending,
+        attempted: pending_tasks.len(),
+        processed: tasks.len(),
+        completed,
+        failed,
+        remaining_pending,
+        worker_count: args.workers,
+        tasks,
+    })
+}
+
 pub async fn run(args: TaskArgs, config: &SwarmConfig) -> anyhow::Result<()> {
     match args.subcommand {
         TaskSubcommand::List(args) => {
@@ -230,6 +465,13 @@ pub async fn run(args: TaskArgs, config: &SwarmConfig) -> anyhow::Result<()> {
                 }
             }
         }
+        TaskSubcommand::Process(args) => {
+            let summary = process_pending_tasks(&args, config).await?;
+            match args.format.as_str() {
+                "json" => println!("{}", serde_json::to_string_pretty(&summary)?),
+                _ => print_process_summary_text(&summary),
+            }
+        }
         TaskSubcommand::Status(args) => {
             let id = parse_task_id(&args.id)?;
             let task = task_store(config)
@@ -257,7 +499,6 @@ pub async fn run(args: TaskArgs, config: &SwarmConfig) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use swarm_core::task::TaskStatus;
     use tempfile::tempdir;
 
     async fn test_config() -> (tempfile::TempDir, SwarmConfig) {
@@ -315,6 +556,96 @@ mod tests {
 
         let updated = task_store(&config).get(&id).await.unwrap().unwrap();
         assert!(matches!(updated.status, TaskStatus::Cancelled { .. }));
+    }
+
+    fn pending_task_with_capability(name: &str, capability: &str) -> Task {
+        let mut spec = TaskSpec::new(name, serde_json::json!({"task": name}));
+        spec.required_capabilities.add(Capability::new(capability));
+        Task::new(spec)
+    }
+
+    #[tokio::test]
+    async fn process_completes_pending_persisted_tasks() {
+        let (_dir, config) = test_config().await;
+        let first = pending_task_with_capability("plan", "planning");
+        let second = pending_task_with_capability("analyze", "analysis");
+        task_store(&config).record(first.clone()).await.unwrap();
+        task_store(&config).record(second.clone()).await.unwrap();
+
+        let summary = process_pending_tasks(
+            &TaskProcessArgs {
+                limit: None,
+                workers: 2,
+                format: "json".into(),
+            },
+            &config,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.available_pending, 2);
+        assert_eq!(summary.processed, 2);
+        assert_eq!(summary.completed, 2);
+        assert_eq!(summary.failed, 0);
+        assert_eq!(summary.remaining_pending, 0);
+
+        let tasks = task_store(&config).list().await.unwrap();
+        assert_eq!(
+            tasks
+                .iter()
+                .filter(|task| matches!(task.status, TaskStatus::Completed { .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn process_respects_limit_and_leaves_remaining_tasks_pending() {
+        let (_dir, config) = test_config().await;
+        for index in 0..2 {
+            task_store(&config)
+                .record(pending_task_with_capability(
+                    &format!("task-{index}"),
+                    "planning",
+                ))
+                .await
+                .unwrap();
+        }
+
+        let summary = process_pending_tasks(
+            &TaskProcessArgs {
+                limit: Some(1),
+                workers: 1,
+                format: "text".into(),
+            },
+            &config,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.attempted, 1);
+        assert_eq!(summary.processed, 1);
+        assert_eq!(summary.remaining_pending, 1);
+    }
+
+    #[tokio::test]
+    async fn process_rejects_zero_workers() {
+        let (_dir, config) = test_config().await;
+
+        let error = process_pending_tasks(
+            &TaskProcessArgs {
+                limit: None,
+                workers: 0,
+                format: "text".into(),
+            },
+            &config,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("workers must be greater than zero"));
     }
 
     #[test]

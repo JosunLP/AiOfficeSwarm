@@ -236,6 +236,41 @@ impl OrchestratorHandle {
         Ok(task_id)
     }
 
+    /// Import an existing persisted pending task snapshot into the orchestrator.
+    ///
+    /// This supports operator flows that persist tasks to disk and later
+    /// rehydrate them into an in-process orchestrator for scheduling.
+    pub async fn import_task_snapshot(&self, mut task: Task) -> SwarmResult<()> {
+        if !matches!(task.status, TaskStatus::Pending) {
+            return Err(SwarmError::InvalidTaskSpec {
+                reason: format!(
+                    "only pending task snapshots can be imported; got {}",
+                    task.status.label()
+                ),
+            });
+        }
+
+        if self.state.tasks.contains_key(&task.id) {
+            return Err(SwarmError::InvalidTaskSpec {
+                reason: format!("task {} is already tracked by the orchestrator", task.id),
+            });
+        }
+
+        if task.spec.timeout.is_none() {
+            task.spec.timeout = self.state.default_task_timeout;
+        }
+        task.spec.validate()?;
+        self.enforce_task_policy("import_task", &task.spec).await?;
+        self.state.task_queue.enqueue(task.clone())?;
+
+        let task_id = task.id;
+        let name = task.spec.name.clone();
+        self.state.tasks.insert(task_id, task);
+        self.state.emit(EventKind::TaskSubmitted { task_id, name });
+        tracing::info!(task_id = %task_id, "Task snapshot imported");
+        Ok(())
+    }
+
     /// Attempt to schedule the next pending task.
     ///
     /// Returns `Some(TaskId)` if a task was successfully scheduled, `None` if
@@ -632,6 +667,34 @@ mod tests {
         let task = handle.get_task(&task_id).unwrap();
 
         assert_eq!(task.spec.timeout, None);
+    }
+
+    #[tokio::test]
+    async fn import_task_snapshot_preserves_existing_id() {
+        let (handle, agent_id) = orchestrator_with_ready_worker();
+        let task = Task::new(TaskSpec::new(
+            "persisted-task",
+            serde_json::json!({"source": "store"}),
+        ));
+        let imported_id = task.id;
+
+        handle.import_task_snapshot(task).await.unwrap();
+
+        assert_eq!(handle.try_schedule_next().await.unwrap(), Some(imported_id));
+        let imported = handle.get_task(&imported_id).unwrap();
+        assert!(
+            matches!(imported.status, TaskStatus::Scheduled { assigned_to } if assigned_to == agent_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn import_task_snapshot_rejects_terminal_tasks() {
+        let (handle, _) = orchestrator_with_ready_worker();
+        let mut task = Task::new(TaskSpec::new("done", serde_json::json!({})));
+        task.complete(serde_json::json!({"ok": true}));
+
+        let error = handle.import_task_snapshot(task).await.unwrap_err();
+        assert!(matches!(error, SwarmError::InvalidTaskSpec { .. }));
     }
 
     #[tokio::test]
