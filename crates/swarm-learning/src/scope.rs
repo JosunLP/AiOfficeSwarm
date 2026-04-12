@@ -42,6 +42,12 @@ impl LearningScope {
     }
 }
 
+impl Default for LearningScope {
+    fn default() -> Self {
+        Self::Global
+    }
+}
+
 /// Configuration for enabling/disabling learning at various scopes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LearningScopeConfig {

@@ -240,8 +240,7 @@ provider subsystems materially useful at runtime.
 Current limits remain explicit:
 
 - provider routing currently annotates execution context rather than invoking providers directly,
-- orchestrator-level submit/schedule policy enforcement is still an embedding concern,
-- team/workflow-specific learning scopes are not yet persisted as first-class identifiers in learning outputs.
+- orchestrator-level submit/schedule policy enforcement is still an embedding concern.
 
 The injected metadata includes keys such as:
 
