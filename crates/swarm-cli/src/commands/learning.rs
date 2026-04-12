@@ -208,12 +208,6 @@ fn print_learning_output_summary(output: &LearningOutput) {
     );
 }
 
-fn matches_category_filter(output: &LearningOutput, requested: Option<&str>) -> bool {
-    requested
-        .map(|category| output.category.label() == category.trim())
-        .unwrap_or(true)
-}
-
 fn parse_learning_category(label: &str) -> anyhow::Result<LearningCategory> {
     LearningCategory::from_str(label).map_err(|error| {
         anyhow::anyhow!(
@@ -233,12 +227,6 @@ fn parse_learning_status(label: &str) -> anyhow::Result<LearningStatus> {
             "unsupported learning status '{other}' (expected pending, pending_approval, applied, rejected, or rolled_back)"
         ),
     }
-}
-
-fn matches_status_filter(output: &LearningOutput, requested: Option<&LearningStatus>) -> bool {
-    requested
-        .map(|status| &output.status == status)
-        .unwrap_or(true)
 }
 
 fn learning_output_filter(
@@ -323,7 +311,9 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
         LearningSubcommand::List(args) => {
             let scope = resolve_scope(args.scope.as_deref(), args.scope_id.as_deref(), config)?;
             let filter = learning_output_filter(args.category.as_deref(), args.status.as_deref())?;
-            let outputs = learning_store(config).list_filtered(&scope, &filter).await?;
+            let outputs = learning_store(config)
+                .list_filtered(&scope, &filter)
+                .await?;
 
             match args.format.as_str() {
                 "json" => println!("{}", serde_json::to_string_pretty(&outputs)?),
@@ -345,7 +335,10 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
                 .list_filtered(
                     &scope,
                     &LearningOutputFilter {
-                        category: args.category.map(|value| parse_learning_category(&value)).transpose()?,
+                        category: args
+                            .category
+                            .map(|value| parse_learning_category(&value))
+                            .transpose()?,
                         status: Some(LearningStatus::PendingApproval),
                     },
                 )
@@ -479,21 +472,6 @@ mod tests {
     }
 
     #[test]
-    fn matches_category_filter_compares_labels() {
-        let output = LearningOutput::auto(
-            swarm_learning::output::LearningCategory::PlanTemplate,
-            "Template",
-            serde_json::json!({}),
-        );
-
-        assert!(matches_category_filter(&output, Some("plan_template")));
-        assert!(!matches_category_filter(
-            &output,
-            Some("pattern_extraction")
-        ));
-    }
-
-    #[test]
     fn parse_learning_status_rejects_unknown_values() {
         let error = parse_learning_status("mystery").unwrap_err();
         assert!(error.to_string().contains("unsupported learning status"));
@@ -511,5 +489,19 @@ mod tests {
             learning_output_filter(Some("plan_template"), Some("pending_approval")).unwrap();
         assert_eq!(filter.category, Some(LearningCategory::PlanTemplate));
         assert_eq!(filter.status, Some(LearningStatus::PendingApproval));
+    }
+
+    #[test]
+    fn learning_output_filter_matches_expected_output() {
+        let filter = learning_output_filter(Some("plan_template"), Some("pending_approval"))
+            .unwrap();
+        let output = LearningOutput::requires_review(
+            LearningCategory::PlanTemplate,
+            "Template",
+            serde_json::json!({}),
+            serde_json::json!({}),
+        );
+
+        assert!(filter.matches(&output));
     }
 }

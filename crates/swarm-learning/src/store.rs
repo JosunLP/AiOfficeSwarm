@@ -311,7 +311,8 @@ impl LearningStore for FileLearningStore {
     }
 
     async fn list(&self, scope: &LearningScope) -> SwarmResult<Vec<LearningOutput>> {
-        self.list_filtered(scope, &LearningOutputFilter::default()).await
+        self.list_filtered(scope, &LearningOutputFilter::default())
+            .await
     }
 
     async fn list_filtered(
@@ -466,7 +467,8 @@ impl LearningStore for InMemoryLearningStore {
     }
 
     async fn list(&self, scope: &LearningScope) -> SwarmResult<Vec<LearningOutput>> {
-        self.list_filtered(scope, &LearningOutputFilter::default()).await
+        self.list_filtered(scope, &LearningOutputFilter::default())
+            .await
     }
 
     async fn list_filtered(

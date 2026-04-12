@@ -298,6 +298,9 @@ mod tests {
     #[test]
     fn category_from_str_preserves_custom_values() {
         let category = "my_custom_category".parse::<LearningCategory>().unwrap();
-        assert_eq!(category, LearningCategory::Custom("my_custom_category".into()));
+        assert_eq!(
+            category,
+            LearningCategory::Custom("my_custom_category".into())
+        );
     }
 }
