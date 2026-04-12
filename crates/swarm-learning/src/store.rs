@@ -8,8 +8,93 @@ use tokio::sync::Mutex;
 
 use swarm_core::error::SwarmResult;
 
-use crate::output::{LearningOutput, LearningRuleId, LearningStatus};
+use crate::output::{LearningCategory, LearningOutput, LearningRuleId, LearningStatus};
 use crate::scope::LearningScope;
+
+fn sort_outputs_by_created_at(outputs: &mut [LearningOutput]) {
+    outputs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+}
+
+fn collect_filtered_outputs<I>(
+    outputs: I,
+    scope: &LearningScope,
+    filter: &LearningOutputFilter,
+) -> Vec<LearningOutput>
+where
+    I: IntoIterator<Item = LearningOutput>,
+{
+    let mut filtered = outputs
+        .into_iter()
+        .filter(|output| scope_matches(output, scope) && filter.matches(output))
+        .collect::<Vec<_>>();
+    sort_outputs_by_created_at(&mut filtered);
+    filtered
+}
+
+fn apply_lifecycle_action(output: &mut LearningOutput, action: LearningLifecycleAction) -> bool {
+    match action {
+        LearningLifecycleAction::Approve if output.status == LearningStatus::PendingApproval => {
+            output.status = LearningStatus::Applied;
+            output.applied_at = Some(Utc::now());
+            true
+        }
+        LearningLifecycleAction::Reject if output.status == LearningStatus::PendingApproval => {
+            output.status = LearningStatus::Rejected;
+            true
+        }
+        LearningLifecycleAction::Rollback if output.status == LearningStatus::Applied => {
+            output.status = LearningStatus::RolledBack;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Optional store-level filters for learning outputs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LearningOutputFilter {
+    /// Restrict results to a specific learning category.
+    pub category: Option<LearningCategory>,
+    /// Restrict results to a specific lifecycle status.
+    pub status: Option<LearningStatus>,
+}
+
+impl LearningOutputFilter {
+    /// Returns `true` when the output matches all configured filters.
+    pub fn matches(&self, output: &LearningOutput) -> bool {
+        self.category
+            .as_ref()
+            .map(|category| &output.category == category)
+            .unwrap_or(true)
+            && self
+                .status
+                .as_ref()
+                .map(|status| &output.status == status)
+                .unwrap_or(true)
+    }
+}
+
+/// A batch lifecycle transition applied to filtered learning outputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LearningLifecycleAction {
+    /// Approve pending-review outputs.
+    Approve,
+    /// Reject pending-review outputs.
+    Reject,
+    /// Roll back already applied outputs.
+    Rollback,
+}
+
+impl LearningLifecycleAction {
+    /// Returns a stable command label for operator output.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::Reject => "reject",
+            Self::Rollback => "rollback",
+        }
+    }
+}
 
 fn scope_matches(output: &LearningOutput, scope: &LearningScope) -> bool {
     if matches!(scope, LearningScope::Global) {
@@ -50,6 +135,13 @@ pub trait LearningStore: Send + Sync {
     /// List all recorded outputs for the given scope.
     async fn list(&self, scope: &LearningScope) -> SwarmResult<Vec<LearningOutput>>;
 
+    /// List recorded outputs for the given scope using store-level filters.
+    async fn list_filtered(
+        &self,
+        scope: &LearningScope,
+        filter: &LearningOutputFilter,
+    ) -> SwarmResult<Vec<LearningOutput>>;
+
     /// List all outputs pending approval for the given scope.
     async fn list_pending_approvals(
         &self,
@@ -64,6 +156,15 @@ pub trait LearningStore: Send + Sync {
 
     /// Roll back a previously applied output.
     async fn rollback(&self, id: &LearningRuleId) -> SwarmResult<()>;
+
+    /// Apply a lifecycle transition to all outputs matching the given scope and
+    /// filter, returning the updated outputs.
+    async fn update_matching(
+        &self,
+        scope: &LearningScope,
+        filter: &LearningOutputFilter,
+        action: LearningLifecycleAction,
+    ) -> SwarmResult<Vec<LearningOutput>>;
 
     /// Retrieve a single output by ID.
     async fn get(&self, id: &LearningRuleId) -> SwarmResult<Option<LearningOutput>>;
@@ -210,32 +311,34 @@ impl LearningStore for FileLearningStore {
     }
 
     async fn list(&self, scope: &LearningScope) -> SwarmResult<Vec<LearningOutput>> {
+        self.list_filtered(scope, &LearningOutputFilter::default()).await
+    }
+
+    async fn list_filtered(
+        &self,
+        scope: &LearningScope,
+        filter: &LearningOutputFilter,
+    ) -> SwarmResult<Vec<LearningOutput>> {
         let _guard = self.lock.lock().await;
-        let mut outputs: Vec<_> = self
-            .load_document()?
-            .outputs
-            .into_iter()
-            .filter(|output| scope_matches(output, scope))
-            .collect();
-        outputs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
-        Ok(outputs)
+        Ok(collect_filtered_outputs(
+            self.load_document()?.outputs,
+            scope,
+            filter,
+        ))
     }
 
     async fn list_pending_approvals(
         &self,
         scope: &LearningScope,
     ) -> SwarmResult<Vec<LearningOutput>> {
-        let _guard = self.lock.lock().await;
-        let mut outputs: Vec<_> = self
-            .load_document()?
-            .outputs
-            .into_iter()
-            .filter(|output| {
-                output.status == LearningStatus::PendingApproval && scope_matches(output, scope)
-            })
-            .collect();
-        outputs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
-        Ok(outputs)
+        self.list_filtered(
+            scope,
+            &LearningOutputFilter {
+                status: Some(LearningStatus::PendingApproval),
+                ..LearningOutputFilter::default()
+            },
+        )
+        .await
     }
 
     async fn approve(&self, id: &LearningRuleId) -> SwarmResult<()> {
@@ -279,6 +382,30 @@ impl LearningStore for FileLearningStore {
             })?;
         output.status = LearningStatus::RolledBack;
         self.save_document(&document)
+    }
+
+    async fn update_matching(
+        &self,
+        scope: &LearningScope,
+        filter: &LearningOutputFilter,
+        action: LearningLifecycleAction,
+    ) -> SwarmResult<Vec<LearningOutput>> {
+        let _guard = self.lock.lock().await;
+        let mut document = self.load_document()?;
+        let mut updated = Vec::new();
+
+        for output in &mut document.outputs {
+            if scope_matches(output, scope)
+                && filter.matches(output)
+                && apply_lifecycle_action(output, action)
+            {
+                updated.push(output.clone());
+            }
+        }
+
+        sort_outputs_by_created_at(&mut updated);
+        self.save_document(&document)?;
+        Ok(updated)
     }
 
     async fn get(&self, id: &LearningRuleId) -> SwarmResult<Option<LearningOutput>> {
@@ -339,30 +466,33 @@ impl LearningStore for InMemoryLearningStore {
     }
 
     async fn list(&self, scope: &LearningScope) -> SwarmResult<Vec<LearningOutput>> {
-        let mut outputs: Vec<_> = self
-            .outputs
-            .iter()
-            .filter(|entry| scope_matches(entry.value(), scope))
-            .map(|entry| entry.value().clone())
-            .collect();
-        outputs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
-        Ok(outputs)
+        self.list_filtered(scope, &LearningOutputFilter::default()).await
+    }
+
+    async fn list_filtered(
+        &self,
+        scope: &LearningScope,
+        filter: &LearningOutputFilter,
+    ) -> SwarmResult<Vec<LearningOutput>> {
+        Ok(collect_filtered_outputs(
+            self.outputs.iter().map(|entry| entry.value().clone()),
+            scope,
+            filter,
+        ))
     }
 
     async fn list_pending_approvals(
         &self,
         scope: &LearningScope,
     ) -> SwarmResult<Vec<LearningOutput>> {
-        Ok(self
-            .outputs
-            .iter()
-            .filter(|entry| {
-                let output = entry.value();
-                output.status == crate::output::LearningStatus::PendingApproval
-                    && scope_matches(output, scope)
-            })
-            .map(|e| e.value().clone())
-            .collect())
+        self.list_filtered(
+            scope,
+            &LearningOutputFilter {
+                status: Some(crate::output::LearningStatus::PendingApproval),
+                ..LearningOutputFilter::default()
+            },
+        )
+        .await
     }
 
     async fn approve(&self, id: &LearningRuleId) -> SwarmResult<()> {
@@ -401,6 +531,34 @@ impl LearningStore for InMemoryLearningStore {
 
     async fn get(&self, id: &LearningRuleId) -> SwarmResult<Option<LearningOutput>> {
         Ok(self.outputs.get(id).map(|e| e.value().clone()))
+    }
+
+    async fn update_matching(
+        &self,
+        scope: &LearningScope,
+        filter: &LearningOutputFilter,
+        action: LearningLifecycleAction,
+    ) -> SwarmResult<Vec<LearningOutput>> {
+        let ids = self
+            .outputs
+            .iter()
+            .filter_map(|entry| {
+                let output = entry.value();
+                (scope_matches(output, scope) && filter.matches(output)).then_some(*entry.key())
+            })
+            .collect::<Vec<_>>();
+
+        let mut updated = Vec::new();
+        for id in ids {
+            if let Some(mut entry) = self.outputs.get_mut(&id) {
+                if apply_lifecycle_action(entry.value_mut(), action) {
+                    updated.push(entry.value().clone());
+                }
+            }
+        }
+
+        sort_outputs_by_created_at(&mut updated);
+        Ok(updated)
     }
 
     async fn count(&self, scope: &LearningScope) -> SwarmResult<u64> {
@@ -490,6 +648,91 @@ mod tests {
 
         let rolled_back = store.get(&id).await.unwrap().unwrap();
         assert_eq!(rolled_back.status, LearningStatus::RolledBack);
+    }
+
+    #[tokio::test]
+    async fn list_filtered_matches_category_and_status() {
+        let store = InMemoryLearningStore::new();
+
+        let plan = LearningOutput::requires_review(
+            LearningCategory::PlanTemplate,
+            "Template",
+            serde_json::json!({"template": true}),
+            serde_json::json!({"source": "test"}),
+        );
+        store.record(plan).await.unwrap();
+
+        let knowledge = LearningOutput::requires_review(
+            LearningCategory::KnowledgeAccumulation,
+            "Knowledge",
+            serde_json::json!({"fact": true}),
+            serde_json::json!({"source": "test"}),
+        );
+        store.record(knowledge).await.unwrap();
+
+        let filtered = store
+            .list_filtered(
+                &LearningScope::Global,
+                &LearningOutputFilter {
+                    category: Some(LearningCategory::PlanTemplate),
+                    status: Some(LearningStatus::PendingApproval),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].category, LearningCategory::PlanTemplate);
+    }
+
+    #[tokio::test]
+    async fn update_matching_applies_batch_transition() {
+        let store = InMemoryLearningStore::new();
+
+        let first = LearningOutput::requires_review(
+            LearningCategory::PlanTemplate,
+            "Template one",
+            serde_json::json!({"template": 1}),
+            serde_json::json!({"source": "test"}),
+        );
+        let second = LearningOutput::requires_review(
+            LearningCategory::PlanTemplate,
+            "Template two",
+            serde_json::json!({"template": 2}),
+            serde_json::json!({"source": "test"}),
+        );
+        let third = LearningOutput::requires_review(
+            LearningCategory::KnowledgeAccumulation,
+            "Knowledge",
+            serde_json::json!({"fact": true}),
+            serde_json::json!({"source": "test"}),
+        );
+        let third_id = third.id;
+
+        store.record(first).await.unwrap();
+        store.record(second).await.unwrap();
+        store.record(third).await.unwrap();
+
+        let updated = store
+            .update_matching(
+                &LearningScope::Global,
+                &LearningOutputFilter {
+                    category: Some(LearningCategory::PlanTemplate),
+                    status: Some(LearningStatus::PendingApproval),
+                },
+                LearningLifecycleAction::Approve,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.len(), 2);
+        assert!(updated
+            .iter()
+            .all(|output| output.status == LearningStatus::Applied));
+        assert_eq!(
+            store.get(&third_id).await.unwrap().unwrap().status,
+            LearningStatus::PendingApproval
+        );
     }
 
     #[tokio::test]

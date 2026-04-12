@@ -5,8 +5,8 @@ use std::str::FromStr;
 
 use swarm_config::{model::LearningScopeKind, SwarmConfig};
 use swarm_learning::{
-    output::LearningRuleId, FileLearningStore, LearningOutput, LearningScope, LearningStatus,
-    LearningStore,
+    output::LearningRuleId, FileLearningStore, LearningCategory, LearningLifecycleAction,
+    LearningOutput, LearningOutputFilter, LearningScope, LearningStatus, LearningStore,
 };
 
 /// Learning management arguments.
@@ -30,10 +30,16 @@ pub enum LearningSubcommand {
     Get(LearningItemArgs),
     /// Approve a learning output.
     Approve(LearningActionArgs),
+    /// Approve multiple learning outputs that match the given filters.
+    ApproveBatch(LearningBatchActionArgs),
     /// Reject a learning output.
     Reject(LearningActionArgs),
+    /// Reject multiple learning outputs that match the given filters.
+    RejectBatch(LearningBatchActionArgs),
     /// Roll back a previously applied learning output.
     Rollback(LearningActionArgs),
+    /// Roll back multiple learning outputs that match the given filters.
+    RollbackBatch(LearningBatchActionArgs),
 }
 
 /// Arguments for listing learning outputs.
@@ -65,6 +71,9 @@ pub struct LearningPendingArgs {
     /// Scope identifier for non-global scopes.
     #[arg(long)]
     pub scope_id: Option<String>,
+    /// Optional category filter (for example `plan_template`).
+    #[arg(long)]
+    pub category: Option<String>,
     /// Output format: text or json.
     #[arg(short, long, default_value = "text")]
     pub format: String,
@@ -85,6 +94,26 @@ pub struct LearningItemArgs {
 pub struct LearningActionArgs {
     /// Learning output ID.
     pub id: String,
+}
+
+/// Arguments for batch lifecycle updates.
+#[derive(Args)]
+pub struct LearningBatchActionArgs {
+    /// Scope to inspect (agent, team, tenant, workflow, global).
+    #[arg(long)]
+    pub scope: Option<String>,
+    /// Scope identifier for non-global scopes.
+    #[arg(long)]
+    pub scope_id: Option<String>,
+    /// Optional category filter (for example `plan_template`).
+    #[arg(long)]
+    pub category: Option<String>,
+    /// Optional status filter (pending, pending_approval, applied, rejected, rolled_back).
+    #[arg(long)]
+    pub status: Option<String>,
+    /// Output format: text or json.
+    #[arg(short, long, default_value = "text")]
+    pub format: String,
 }
 
 fn learning_store(config: &SwarmConfig) -> FileLearningStore {
@@ -185,6 +214,14 @@ fn matches_category_filter(output: &LearningOutput, requested: Option<&str>) -> 
         .unwrap_or(true)
 }
 
+fn parse_learning_category(label: &str) -> anyhow::Result<LearningCategory> {
+    LearningCategory::from_str(label).map_err(|error| {
+        anyhow::anyhow!(
+            "unsupported learning category '{label}': {error} (expected a built-in label such as plan_template or a custom snake_case value)"
+        )
+    })
+}
+
 fn parse_learning_status(label: &str) -> anyhow::Result<LearningStatus> {
     match label.trim().to_ascii_lowercase().as_str() {
         "pending" => Ok(LearningStatus::Pending),
@@ -204,6 +241,67 @@ fn matches_status_filter(output: &LearningOutput, requested: Option<&LearningSta
         .unwrap_or(true)
 }
 
+fn learning_output_filter(
+    category: Option<&str>,
+    status: Option<&str>,
+) -> anyhow::Result<LearningOutputFilter> {
+    Ok(LearningOutputFilter {
+        category: category.map(parse_learning_category).transpose()?,
+        status: status.map(parse_learning_status).transpose()?,
+    })
+}
+
+fn format_batch_action_verb(action: LearningLifecycleAction) -> &'static str {
+    match action {
+        LearningLifecycleAction::Approve => "Approved",
+        LearningLifecycleAction::Reject => "Rejected",
+        LearningLifecycleAction::Rollback => "Rolled back",
+    }
+}
+
+fn default_status_for_action(action: LearningLifecycleAction) -> LearningStatus {
+    match action {
+        LearningLifecycleAction::Approve | LearningLifecycleAction::Reject => {
+            LearningStatus::PendingApproval
+        }
+        LearningLifecycleAction::Rollback => LearningStatus::Applied,
+    }
+}
+
+async fn run_batch_action(
+    args: LearningBatchActionArgs,
+    config: &SwarmConfig,
+    action: LearningLifecycleAction,
+) -> anyhow::Result<()> {
+    let scope = resolve_scope(args.scope.as_deref(), args.scope_id.as_deref(), config)?;
+    let mut filter = learning_output_filter(args.category.as_deref(), args.status.as_deref())?;
+    if filter.status.is_none() {
+        filter.status = Some(default_status_for_action(action));
+    }
+
+    let updated = learning_store(config)
+        .update_matching(&scope, &filter, action)
+        .await?;
+
+    match args.format.as_str() {
+        "json" => println!("{}", serde_json::to_string_pretty(&updated)?),
+        _ => {
+            println!(
+                "{} learning outputs ({}, scope={}, action={})",
+                format_batch_action_verb(action),
+                updated.len(),
+                scope.label(),
+                action.label()
+            );
+            for output in updated {
+                print_learning_output_summary(&output);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()> {
     match args.subcommand {
         LearningSubcommand::Inspect => {
@@ -220,22 +318,12 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
             println!("  default_scope: {:?}", config.learning.default_scope);
             println!("  store_path: {}", config.learning.store_path);
             println!();
-            println!("Use `swarm learning list`, `pending`, `get`, `approve`, `reject`, and `rollback` to inspect and manage the persistent queue.");
+            println!("Use `swarm learning list`, `pending`, `get`, `approve`, `approve-batch`, `reject`, `reject-batch`, `rollback`, and `rollback-batch` to inspect and manage the persistent queue.");
         }
         LearningSubcommand::List(args) => {
             let scope = resolve_scope(args.scope.as_deref(), args.scope_id.as_deref(), config)?;
-            let requested_status = args
-                .status
-                .as_deref()
-                .map(parse_learning_status)
-                .transpose()?;
-            let outputs = learning_store(config)
-                .list(&scope)
-                .await?
-                .into_iter()
-                .filter(|output| matches_category_filter(output, args.category.as_deref()))
-                .filter(|output| matches_status_filter(output, requested_status.as_ref()))
-                .collect::<Vec<_>>();
+            let filter = learning_output_filter(args.category.as_deref(), args.status.as_deref())?;
+            let outputs = learning_store(config).list_filtered(&scope, &filter).await?;
 
             match args.format.as_str() {
                 "json" => println!("{}", serde_json::to_string_pretty(&outputs)?),
@@ -254,7 +342,13 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
         LearningSubcommand::Pending(args) => {
             let scope = resolve_scope(args.scope.as_deref(), args.scope_id.as_deref(), config)?;
             let pending = learning_store(config)
-                .list_pending_approvals(&scope)
+                .list_filtered(
+                    &scope,
+                    &LearningOutputFilter {
+                        category: args.category.map(|value| parse_learning_category(&value)).transpose()?,
+                        status: Some(LearningStatus::PendingApproval),
+                    },
+                )
                 .await?;
             match args.format.as_str() {
                 "json" => println!("{}", serde_json::to_string_pretty(&pending)?),
@@ -295,6 +389,9 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
                 output.status.label()
             );
         }
+        LearningSubcommand::ApproveBatch(args) => {
+            run_batch_action(args, config, LearningLifecycleAction::Approve).await?;
+        }
         LearningSubcommand::Reject(args) => {
             let id = parse_learning_rule_id(&args.id)?;
             let store = learning_store(config);
@@ -309,6 +406,9 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
                 output.status.label()
             );
         }
+        LearningSubcommand::RejectBatch(args) => {
+            run_batch_action(args, config, LearningLifecycleAction::Reject).await?;
+        }
         LearningSubcommand::Rollback(args) => {
             let id = parse_learning_rule_id(&args.id)?;
             let store = learning_store(config);
@@ -322,6 +422,9 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
                 output.id,
                 output.status.label()
             );
+        }
+        LearningSubcommand::RollbackBatch(args) => {
+            run_batch_action(args, config, LearningLifecycleAction::Rollback).await?;
         }
     }
     Ok(())
@@ -394,5 +497,19 @@ mod tests {
     fn parse_learning_status_rejects_unknown_values() {
         let error = parse_learning_status("mystery").unwrap_err();
         assert!(error.to_string().contains("unsupported learning status"));
+    }
+
+    #[test]
+    fn parse_learning_category_supports_builtin_labels() {
+        let category = parse_learning_category("plan_template").unwrap();
+        assert_eq!(category, LearningCategory::PlanTemplate);
+    }
+
+    #[test]
+    fn learning_output_filter_parses_category_and_status() {
+        let filter =
+            learning_output_filter(Some("plan_template"), Some("pending_approval")).unwrap();
+        assert_eq!(filter.category, Some(LearningCategory::PlanTemplate));
+        assert_eq!(filter.status, Some(LearningStatus::PendingApproval));
     }
 }

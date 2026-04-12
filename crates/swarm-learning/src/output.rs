@@ -91,6 +91,26 @@ impl LearningCategory {
     }
 }
 
+impl std::str::FromStr for LearningCategory {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "preference_adaptation" => Ok(Self::PreferenceAdaptation),
+            "pattern_extraction" => Ok(Self::PatternExtraction),
+            "feedback_incorporation" => Ok(Self::FeedbackIncorporation),
+            "plan_template" => Ok(Self::PlanTemplate),
+            "scoring_improvement" => Ok(Self::ScoringImprovement),
+            "knowledge_accumulation" => Ok(Self::KnowledgeAccumulation),
+            "configuration_evolution" => Ok(Self::ConfigurationEvolution),
+            "fine_tuning_data" => Ok(Self::FineTuningData),
+            "" => Err("learning category cannot be empty".into()),
+            _ => Ok(Self::Custom(normalized)),
+        }
+    }
+}
+
 /// A single learning output produced by a strategy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LearningOutput {
@@ -267,5 +287,17 @@ mod tests {
         });
 
         assert_eq!(output.scope_label(), "workflow:intake");
+    }
+
+    #[test]
+    fn category_from_str_accepts_built_in_label() {
+        let category = "plan_template".parse::<LearningCategory>().unwrap();
+        assert_eq!(category, LearningCategory::PlanTemplate);
+    }
+
+    #[test]
+    fn category_from_str_preserves_custom_values() {
+        let category = "my_custom_category".parse::<LearningCategory>().unwrap();
+        assert_eq!(category, LearningCategory::Custom("my_custom_category".into()));
     }
 }
