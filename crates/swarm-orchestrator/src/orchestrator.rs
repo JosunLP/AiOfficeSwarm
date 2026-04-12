@@ -253,7 +253,8 @@ impl OrchestratorHandle {
             Some(t) => t,
             None => return Ok(None),
         };
-        self.enforce_task_policy("schedule_task", &task.spec).await?;
+        self.enforce_task_policy("schedule_task", &task.spec)
+            .await?;
 
         match self.state.scheduler.schedule(&task)? {
             SchedulingDecision::Assigned { task_id, agent_id } => {
@@ -421,10 +422,16 @@ impl OrchestratorHandle {
             return Ok(());
         };
 
+        let priority = match spec.priority {
+            swarm_core::task::TaskPriority::Low => "low",
+            swarm_core::task::TaskPriority::Normal => "normal",
+            swarm_core::task::TaskPriority::High => "high",
+            swarm_core::task::TaskPriority::Critical => "critical",
+        };
         let mut context = PolicyContext::new(action, "orchestrator", &spec.name);
         context.attributes = serde_json::json!({
             "task_name": spec.name,
-            "priority": format!("{:?}", spec.priority).to_lowercase(),
+            "priority": priority,
             "required_capabilities": spec
                 .required_capabilities
                 .iter()
@@ -457,6 +464,7 @@ impl OrchestratorHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use swarm_core::{
         agent::{AgentDescriptor, AgentKind},
         capability::{Capability, CapabilitySet},
@@ -465,7 +473,8 @@ mod tests {
         task::{TaskSpec, TaskStatus},
     };
     use swarm_policy::ActionAllowlistPolicy;
-    use std::sync::Arc;
+
+    const POLICY_BY_ACTION_ID: &str = "00000000-0000-0000-0000-000000000123";
 
     fn make_worker(caps: CapabilitySet) -> AgentDescriptor {
         AgentDescriptor::new("worker-1", AgentKind::Worker, caps)
@@ -652,7 +661,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(handle.try_schedule_next().await.unwrap(), Some(first_task_id));
+        assert_eq!(
+            handle.try_schedule_next().await.unwrap(),
+            Some(first_task_id)
+        );
         assert_eq!(handle.try_schedule_next().await.unwrap(), None);
 
         let assigned_agent_id = match handle.get_task(&first_task_id).unwrap().status {
@@ -671,7 +683,10 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(handle.try_schedule_next().await.unwrap(), Some(second_task_id));
+        assert_eq!(
+            handle.try_schedule_next().await.unwrap(),
+            Some(second_task_id)
+        );
     }
 
     #[tokio::test]
@@ -688,7 +703,9 @@ mod tests {
             policy_engine,
         );
         let handle = orch.handle();
-        let agent_id = handle.register_agent(make_worker(CapabilitySet::new())).unwrap();
+        let agent_id = handle
+            .register_agent(make_worker(CapabilitySet::new()))
+            .unwrap();
         handle.set_agent_ready(agent_id).unwrap();
 
         let task_id = handle
@@ -719,7 +736,9 @@ mod tests {
             .submit_task(TaskSpec::new("blocked-task", serde_json::json!({})))
             .await
             .unwrap_err();
-        assert!(matches!(error, SwarmError::PolicyViolation { action, .. } if action == "submit_task"));
+        assert!(
+            matches!(error, SwarmError::PolicyViolation { action, .. } if action == "submit_task")
+        );
         assert_eq!(handle.pending_task_count(), 0);
 
         loop {
@@ -752,7 +771,9 @@ mod tests {
             policy_engine,
         );
         let handle = orch.handle();
-        let agent_id = handle.register_agent(make_worker(CapabilitySet::new())).unwrap();
+        let agent_id = handle
+            .register_agent(make_worker(CapabilitySet::new()))
+            .unwrap();
         handle.set_agent_ready(agent_id).unwrap();
 
         let task_id = handle
@@ -761,9 +782,14 @@ mod tests {
             .unwrap();
 
         let error = handle.try_schedule_next().await.unwrap_err();
-        assert!(matches!(error, SwarmError::PolicyViolation { action, .. } if action == "schedule_task"));
+        assert!(
+            matches!(error, SwarmError::PolicyViolation { action, .. } if action == "schedule_task")
+        );
         assert_eq!(handle.pending_task_count(), 1);
-        assert!(matches!(handle.get_task(&task_id).unwrap().status, TaskStatus::Pending));
+        assert!(matches!(
+            handle.get_task(&task_id).unwrap().status,
+            TaskStatus::Pending
+        ));
     }
 
     struct PolicyByAction {
@@ -774,18 +800,21 @@ mod tests {
     #[async_trait::async_trait]
     impl swarm_core::policy::Policy for PolicyByAction {
         fn id(&self) -> swarm_core::identity::PolicyId {
-            "00000000-0000-0000-0000-000000000123"
-                .parse()
-                .expect("test UUID should parse")
+            POLICY_BY_ACTION_ID.parse().expect("test UUID should parse")
         }
 
         fn name(&self) -> &str {
             "policy-by-action"
         }
 
-        async fn evaluate(&self, context: &PolicyContext) -> SwarmResult<swarm_core::policy::PolicyOutcome> {
+        async fn evaluate(
+            &self,
+            context: &PolicyContext,
+        ) -> SwarmResult<swarm_core::policy::PolicyOutcome> {
             match context.action.as_str() {
-                "submit_task" if self.submit_allowed => Ok(swarm_core::policy::PolicyOutcome::Allow),
+                "submit_task" if self.submit_allowed => {
+                    Ok(swarm_core::policy::PolicyOutcome::Allow)
+                }
                 "schedule_task" if self.schedule_allowed => {
                     Ok(swarm_core::policy::PolicyOutcome::Allow)
                 }
