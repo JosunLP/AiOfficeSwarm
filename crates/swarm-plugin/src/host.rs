@@ -44,10 +44,7 @@ impl PluginPermissionPolicy {
     }
 
     /// Restrict WASM permissions to the provided allow-list.
-    pub fn with_allowed_wasm_permissions<I>(
-        mut self,
-        permissions: I,
-    ) -> Self
+    pub fn with_allowed_wasm_permissions<I>(mut self, permissions: I) -> Self
     where
         I: IntoIterator<Item = crate::manifest::WasmPermission>,
     {
@@ -123,9 +120,15 @@ impl PluginHost {
         }
     }
 
-    fn validate_manifest_permissions(&self, manifest: &crate::manifest::PluginManifest) -> SwarmResult<()> {
+    fn validate_manifest_permissions(
+        &self,
+        manifest: &crate::manifest::PluginManifest,
+    ) -> SwarmResult<()> {
         for permission in &manifest.required_permissions {
-            if !self.permission_policy.allows_framework_permission(permission) {
+            if !self
+                .permission_policy
+                .allows_framework_permission(permission)
+            {
                 return Err(SwarmError::PermissionDenied {
                     subject: manifest.name.clone(),
                     permission: permission.clone(),
@@ -596,8 +599,7 @@ mod tests {
     #[tokio::test]
     async fn load_rejects_framework_permissions_outside_allowlist() {
         let host = PluginHost::with_permission_policy(
-            PluginPermissionPolicy::new()
-                .with_allowed_framework_permissions(["read:config"]),
+            PluginPermissionPolicy::new().with_allowed_framework_permissions(["read:config"]),
         );
 
         let error = host
@@ -618,9 +620,8 @@ mod tests {
     #[tokio::test]
     async fn load_rejects_wasm_permissions_outside_allowlist() {
         let host = PluginHost::with_permission_policy(
-            PluginPermissionPolicy::new().with_allowed_wasm_permissions([
-                WasmPermission::EnvVar("SAFE_TOKEN".into()),
-            ]),
+            PluginPermissionPolicy::new()
+                .with_allowed_wasm_permissions([WasmPermission::EnvVar("SAFE_TOKEN".into())]),
         );
 
         let error = host
