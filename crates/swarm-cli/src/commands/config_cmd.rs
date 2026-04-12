@@ -37,6 +37,10 @@ pub async fn run(args: ConfigArgs, config: &SwarmConfig) -> anyhow::Result<()> {
                 "    max_concurrent_tasks:       {}",
                 config.orchestrator.max_concurrent_tasks
             );
+            println!(
+                "    task_store_path:            {}",
+                config.orchestrator.task_store_path
+            );
             println!("  telemetry:");
             println!(
                 "    log_level:                  {}",

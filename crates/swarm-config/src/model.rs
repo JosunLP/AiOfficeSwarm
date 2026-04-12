@@ -57,6 +57,8 @@ pub struct OrchestratorConfig {
     pub default_task_timeout_secs: u64,
     /// Maximum number of concurrent scheduled/running tasks across the whole swarm.
     pub max_concurrent_tasks: usize,
+    /// JSON file used by local operator task commands for cross-process snapshots.
+    pub task_store_path: String,
 }
 
 impl Default for OrchestratorConfig {
@@ -66,6 +68,7 @@ impl Default for OrchestratorConfig {
             max_dispatch_per_tick: 16,
             default_task_timeout_secs: 300,
             max_concurrent_tasks: 256,
+            task_store_path: ".swarm/task-store.json".into(),
         }
     }
 }

@@ -25,9 +25,11 @@ pub mod registry;
 pub mod scheduler;
 pub mod supervision;
 pub mod task_queue;
+pub mod task_store;
 
 pub use orchestrator::{Orchestrator, OrchestratorConfig, OrchestratorHandle};
 pub use registry::{AgentRecord, AgentRegistry};
 pub use scheduler::{Scheduler, SchedulingDecision};
 pub use supervision::SupervisionManager;
 pub use task_queue::TaskQueue;
+pub use task_store::{FileTaskStore, InMemoryTaskStore, TaskStore};
