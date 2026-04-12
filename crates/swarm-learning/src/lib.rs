@@ -38,7 +38,10 @@ pub mod store;
 pub mod strategy;
 
 pub use event::LearningEvent;
-pub use output::{LearningOutput, LearningResult, LearningStatus};
+pub use output::{LearningCategory, LearningOutput, LearningResult, LearningStatus};
 pub use scope::LearningScope;
-pub use store::{FileLearningStore, InMemoryLearningStore, LearningStore};
+pub use store::{
+    FileLearningStore, InMemoryLearningStore, LearningLifecycleAction, LearningOutputFilter,
+    LearningStore,
+};
 pub use strategy::{ExecutionTemplateStrategy, LearningContext, LearningStrategy};

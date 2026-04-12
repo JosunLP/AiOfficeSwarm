@@ -211,8 +211,9 @@ The CLI now exposes lightweight inspection commands for key enterprise concepts:
 - `swarm task list` / `status <id>` / `cancel <id>` — inspect or update the local persistent task queue snapshot.
 - `swarm learning inspect` — show the effective learning governance baseline.
 - `swarm learning list --scope global --category plan_template` — inspect recorded learning outputs, including reusable learned templates.
-- `swarm learning pending --scope global` — inspect the persistent learning approval queue.
-- `swarm learning approve <id>` / `reject <id>` / `rollback <id>` — manage learning lifecycle decisions.
+- `swarm learning pending --scope global --category plan_template` — inspect the persistent learning approval queue with optional category filtering.
+- `swarm learning approve <id>` / `reject <id>` / `rollback <id>` — manage individual learning lifecycle decisions.
+- `swarm learning approve-batch --scope global --category plan_template` — apply lifecycle updates to filtered groups of learning outputs.
 - `swarm config --format json` — inspect the full effective configuration, including provider, memory, learning, plugin, and role settings.
 
 The local task commands persist to `orchestrator.task_store_path` (default
