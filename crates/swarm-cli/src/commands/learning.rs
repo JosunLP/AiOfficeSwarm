@@ -239,7 +239,7 @@ fn learning_output_filter(
     })
 }
 
-fn format_batch_action_verb(action: LearningLifecycleAction) -> &'static str {
+fn batch_action_past_tense(action: LearningLifecycleAction) -> &'static str {
     match action {
         LearningLifecycleAction::Approve => "Approved",
         LearningLifecycleAction::Reject => "Rejected",
@@ -276,7 +276,7 @@ async fn run_batch_action(
         _ => {
             println!(
                 "{} learning outputs ({}, scope={}, action={})",
-                format_batch_action_verb(action),
+                batch_action_past_tense(action),
                 updated.len(),
                 scope.label(),
                 action.label()

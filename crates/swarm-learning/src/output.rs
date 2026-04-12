@@ -105,7 +105,10 @@ impl std::str::FromStr for LearningCategory {
             "knowledge_accumulation" => Ok(Self::KnowledgeAccumulation),
             "configuration_evolution" => Ok(Self::ConfigurationEvolution),
             "fine_tuning_data" => Ok(Self::FineTuningData),
-            "" => Err("learning category cannot be empty".into()),
+            "" => Err(
+                "learning category cannot be empty; expected a built-in label or custom value"
+                    .into(),
+            ),
             _ => Ok(Self::Custom(normalized)),
         }
     }
