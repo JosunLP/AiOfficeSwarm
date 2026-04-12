@@ -244,10 +244,7 @@ impl TaskRunner {
                 self.execute_with_timeout(task_id, agent_id, task, snapshot, timeout)
                     .await
             }
-            None => {
-                self.execute_without_timeout(task_id, agent_id, task, snapshot)
-                    .await
-            }
+            None => self.execute_without_timeout(agent_id, task, snapshot).await,
         }
     }
 
