@@ -32,6 +32,8 @@ pub enum TaskSubcommand {
     Process(TaskProcessArgs),
     /// Return a retryable persisted task to the pending state.
     Retry(TaskRetryArgs),
+    /// Return multiple retryable persisted tasks to the pending state.
+    RetryBatch(TaskRetryBatchArgs),
     /// Show a single persisted task.
     Status(TaskStatusArgs),
     /// Cancel a pending persisted task.
@@ -94,6 +96,20 @@ pub struct TaskProcessArgs {
 pub struct TaskRetryArgs {
     /// Task ID.
     pub id: String,
+}
+
+/// Arguments for retrying multiple persisted tasks.
+#[derive(Args)]
+pub struct TaskRetryBatchArgs {
+    /// Restrict retries to a specific retryable status: failed, cancelled, timed_out.
+    #[arg(long)]
+    pub status: Option<String>,
+    /// Maximum number of retryable tasks to requeue in this invocation.
+    #[arg(long)]
+    pub limit: Option<usize>,
+    /// Output format: text or json.
+    #[arg(short, long, default_value = "text")]
+    pub format: String,
 }
 
 /// Arguments for showing a single task.
@@ -181,6 +197,23 @@ fn status_matches(task: &Task, status: Option<&str>) -> bool {
         .unwrap_or(true)
 }
 
+fn parse_retryable_status_filter(status: Option<&str>) -> anyhow::Result<Option<&str>> {
+    match status.map(|value| value.trim().to_ascii_lowercase()) {
+        None => Ok(None),
+        Some(value) if value == "failed" || value == "cancelled" || value == "timed_out" => {
+            Ok(Some(match value.as_str() {
+                "failed" => "failed",
+                "cancelled" => "cancelled",
+                "timed_out" => "timed_out",
+                _ => unreachable!(),
+            }))
+        }
+        Some(other) => anyhow::bail!(
+            "unsupported retry batch status '{other}' (expected failed, cancelled, or timed_out)"
+        ),
+    }
+}
+
 fn print_task_text(task: &Task) -> anyhow::Result<()> {
     println!("Task");
     println!("  id:           {}", task.id);
@@ -256,6 +289,22 @@ struct TaskProcessSummary {
     tasks: Vec<ProcessedTaskReport>,
 }
 
+#[derive(Debug, Serialize)]
+struct RetriedTaskReport {
+    id: String,
+    name: String,
+    previous_status: String,
+    status: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TaskRetrySummary {
+    available_retryable: usize,
+    retried: usize,
+    remaining_retryable: usize,
+    tasks: Vec<RetriedTaskReport>,
+}
+
 struct BuiltInTaskWorker {
     descriptor: AgentDescriptor,
 }
@@ -321,6 +370,22 @@ fn print_process_summary_text(summary: &TaskProcessSummary) {
             println!(
                 "    - {} [{}] {} via {}",
                 task.id, task.status, task.name, task.worker
+            );
+        }
+    }
+}
+
+fn print_retry_summary_text(summary: &TaskRetrySummary) {
+    println!("Retried persisted tasks");
+    println!("  retryable_available: {}", summary.available_retryable);
+    println!("  retried:             {}", summary.retried);
+    println!("  remaining_retryable: {}", summary.remaining_retryable);
+    if !summary.tasks.is_empty() {
+        println!("  task_results:");
+        for task in &summary.tasks {
+            println!(
+                "    - {} [{} -> {}] {}",
+                task.id, task.previous_status, task.status, task.name
             );
         }
     }
@@ -435,6 +500,59 @@ async fn process_pending_tasks(
     })
 }
 
+fn collect_retryable_tasks(
+    mut tasks: Vec<Task>,
+    status: Option<&str>,
+    limit: Option<usize>,
+) -> Vec<Task> {
+    tasks.retain(|task| task.status.can_retry() && status_matches(task, status));
+    tasks.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+    if let Some(limit) = limit {
+        tasks.truncate(limit);
+    }
+    tasks
+}
+
+async fn retry_persisted_tasks(
+    args: &TaskRetryBatchArgs,
+    config: &SwarmConfig,
+) -> anyhow::Result<TaskRetrySummary> {
+    let status = parse_retryable_status_filter(args.status.as_deref())?;
+    let store = task_store(config);
+    let all_tasks = store.list().await?;
+    let available_retryable = all_tasks
+        .iter()
+        .filter(|task| task.status.can_retry() && status_matches(task, status))
+        .count();
+    let retryable_tasks = collect_retryable_tasks(all_tasks, status, args.limit);
+
+    let mut tasks = Vec::with_capacity(retryable_tasks.len());
+    for task in retryable_tasks {
+        let previous_status = task.status.label().to_string();
+        let retried = store.retry(&task.id).await?;
+        tasks.push(RetriedTaskReport {
+            id: retried.id.to_string(),
+            name: retried.spec.name.clone(),
+            previous_status,
+            status: retried.status.label().into(),
+        });
+    }
+
+    let remaining_retryable = store
+        .list()
+        .await?
+        .into_iter()
+        .filter(|task| task.status.can_retry() && status_matches(task, status))
+        .count();
+
+    Ok(TaskRetrySummary {
+        available_retryable,
+        retried: tasks.len(),
+        remaining_retryable,
+        tasks,
+    })
+}
+
 pub async fn run(args: TaskArgs, config: &SwarmConfig) -> anyhow::Result<()> {
     match args.subcommand {
         TaskSubcommand::List(args) => {
@@ -482,6 +600,13 @@ pub async fn run(args: TaskArgs, config: &SwarmConfig) -> anyhow::Result<()> {
             let id = parse_task_id(&args.id)?;
             let task = task_store(config).retry(&id).await?;
             println!("Retried task {} (status={})", task.id, task.status.label());
+        }
+        TaskSubcommand::RetryBatch(args) => {
+            let summary = retry_persisted_tasks(&args, config).await?;
+            match args.format.as_str() {
+                "json" => println!("{}", serde_json::to_string_pretty(&summary)?),
+                _ => print_retry_summary_text(&summary),
+            }
         }
         TaskSubcommand::Status(args) => {
             let id = parse_task_id(&args.id)?;
@@ -610,6 +735,115 @@ mod tests {
         assert!(error
             .to_string()
             .contains("only failed, cancelled, or timed out tasks can be retried"));
+    }
+
+    #[tokio::test]
+    async fn retry_batch_requeues_retryable_tasks_by_default() {
+        let (_dir, config) = test_config().await;
+        let mut failed = Task::new(TaskSpec::new("failed-task", serde_json::json!({})));
+        failed.fail("transient");
+        let failed_id = failed.id;
+        task_store(&config).record(failed).await.unwrap();
+
+        let pending = Task::new(TaskSpec::new("pending-task", serde_json::json!({})));
+        let pending_id = pending.id;
+        task_store(&config).record(pending).await.unwrap();
+
+        let mut timed_out = Task::new(TaskSpec::new("timed-out-task", serde_json::json!({})));
+        timed_out.time_out();
+        let timed_out_id = timed_out.id;
+        task_store(&config).record(timed_out).await.unwrap();
+
+        let summary = retry_persisted_tasks(
+            &TaskRetryBatchArgs {
+                status: None,
+                limit: None,
+                format: "json".into(),
+            },
+            &config,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.available_retryable, 2);
+        assert_eq!(summary.retried, 2);
+        assert_eq!(summary.remaining_retryable, 0);
+        assert_eq!(
+            task_store(&config)
+                .get(&failed_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status
+                .label(),
+            "pending"
+        );
+        assert_eq!(
+            task_store(&config)
+                .get(&timed_out_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status
+                .label(),
+            "pending"
+        );
+        assert_eq!(
+            task_store(&config)
+                .get(&pending_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status
+                .label(),
+            "pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_batch_respects_status_and_limit_filters() {
+        let (_dir, config) = test_config().await;
+        for index in 0..2 {
+            let mut task = Task::new(TaskSpec::new(
+                format!("failed-{index}"),
+                serde_json::json!({ "index": index }),
+            ));
+            task.fail("transient");
+            task_store(&config).record(task).await.unwrap();
+        }
+        let mut cancelled = Task::new(TaskSpec::new("cancelled", serde_json::json!({})));
+        cancelled.status = TaskStatus::Cancelled {
+            cancelled_at: swarm_core::types::now(),
+            reason: Some("operator".into()),
+        };
+        task_store(&config).record(cancelled).await.unwrap();
+
+        let summary = retry_persisted_tasks(
+            &TaskRetryBatchArgs {
+                status: Some("failed".into()),
+                limit: Some(1),
+                format: "text".into(),
+            },
+            &config,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.available_retryable, 2);
+        assert_eq!(summary.retried, 1);
+        assert_eq!(summary.remaining_retryable, 1);
+        assert!(summary
+            .tasks
+            .iter()
+            .all(|task| task.previous_status == "failed" && task.status == "pending"));
+    }
+
+    #[test]
+    fn parse_retryable_status_filter_rejects_non_retryable_status() {
+        let error = parse_retryable_status_filter(Some("completed")).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unsupported retry batch status 'completed'"));
     }
 
     fn pending_task_with_capability(name: &str, capability: &str) -> Task {
