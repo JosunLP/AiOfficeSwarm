@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use clap::{Args, Subcommand};
 use serde::Serialize;
-use std::{str::FromStr, time::Duration};
+use std::{fs, str::FromStr, time::Duration};
 use swarm_config::SwarmConfig;
 use swarm_core::{
     agent::{Agent, AgentDescriptor, AgentKind},
@@ -28,8 +28,11 @@ pub enum TaskSubcommand {
     List(TaskListArgs),
     /// Submit a new task into the local persistent task store.
     Submit(TaskSubmitArgs),
-    /// Process pending persisted tasks with built-in local workers.
+    /// Rehydrate pending persisted tasks into an in-process orchestrator and
+    /// execute them with built-in local workers.
     Process(TaskProcessArgs),
+    /// Export persisted task snapshots for audit, backup, or migration flows.
+    Export(TaskExportArgs),
     /// Return a retryable persisted task to the pending state.
     Retry(TaskRetryArgs),
     /// Return multiple retryable persisted tasks to the pending state.
@@ -89,6 +92,23 @@ pub struct TaskProcessArgs {
     /// Output format: text or json.
     #[arg(short, long, default_value = "text")]
     pub format: String,
+}
+
+/// Arguments for exporting persisted tasks.
+#[derive(Args)]
+pub struct TaskExportArgs {
+    /// Optional status filter.
+    #[arg(long)]
+    pub status: Option<String>,
+    /// Maximum number of tasks to export after filtering.
+    #[arg(long)]
+    pub limit: Option<usize>,
+    /// Export format: json or jsonl.
+    #[arg(short, long, default_value = "json")]
+    pub format: String,
+    /// Optional destination path. Defaults to stdout.
+    #[arg(long)]
+    pub output: Option<String>,
 }
 
 /// Arguments for retrying a persisted task.
@@ -391,6 +411,44 @@ fn print_retry_summary_text(summary: &TaskRetrySummary) {
     }
 }
 
+fn collect_export_tasks(
+    mut tasks: Vec<Task>,
+    status: Option<&str>,
+    limit: Option<usize>,
+) -> Vec<Task> {
+    tasks.retain(|task| status_matches(task, status));
+    tasks.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+    if let Some(limit) = limit {
+        tasks.truncate(limit);
+    }
+    tasks
+}
+
+fn render_exported_tasks(tasks: &[Task], format: &str) -> anyhow::Result<String> {
+    match format.trim().to_ascii_lowercase().as_str() {
+        "json" => serde_json::to_string_pretty(tasks).map_err(Into::into),
+        "jsonl" => tasks
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|lines| lines.join("\n"))
+            .map_err(Into::into),
+        other => anyhow::bail!("unsupported export format '{other}' (expected json or jsonl)"),
+    }
+}
+
+async fn export_persisted_tasks(
+    args: &TaskExportArgs,
+    config: &SwarmConfig,
+) -> anyhow::Result<String> {
+    let tasks = collect_export_tasks(
+        task_store(config).list().await?,
+        args.status.as_deref(),
+        args.limit,
+    );
+    render_exported_tasks(&tasks, &args.format)
+}
+
 async fn process_pending_tasks(
     args: &TaskProcessArgs,
     config: &SwarmConfig,
@@ -594,6 +652,14 @@ pub async fn run(args: TaskArgs, config: &SwarmConfig) -> anyhow::Result<()> {
             match args.format.as_str() {
                 "json" => println!("{}", serde_json::to_string_pretty(&summary)?),
                 _ => print_process_summary_text(&summary),
+            }
+        }
+        TaskSubcommand::Export(args) => {
+            let rendered = export_persisted_tasks(&args, config).await?;
+            if let Some(path) = args.output.as_deref() {
+                fs::write(path, rendered)?;
+            } else {
+                println!("{rendered}");
             }
         }
         TaskSubcommand::Retry(args) => {
@@ -838,12 +904,85 @@ mod tests {
             .all(|task| task.previous_status == "failed" && task.status == "pending"));
     }
 
+    #[tokio::test]
+    async fn export_filters_tasks_and_renders_jsonl() {
+        let (_dir, config) = test_config().await;
+        let pending = Task::new(TaskSpec::new(
+            "pending-task",
+            serde_json::json!({"kind": "pending"}),
+        ));
+        task_store(&config).record(pending).await.unwrap();
+
+        let mut failed = Task::new(TaskSpec::new(
+            "failed-task",
+            serde_json::json!({"kind": "failed"}),
+        ));
+        failed.fail("transient");
+        task_store(&config).record(failed).await.unwrap();
+
+        let exported = export_persisted_tasks(
+            &TaskExportArgs {
+                status: Some("failed".into()),
+                limit: Some(1),
+                format: "jsonl".into(),
+                output: None,
+            },
+            &config,
+        )
+        .await
+        .unwrap();
+
+        let lines = exported.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1);
+        let exported_task: Task = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(exported_task.spec.name, "failed-task");
+        assert_eq!(exported_task.status.label(), "failed");
+    }
+
+    #[tokio::test]
+    async fn export_writes_json_snapshot_to_file() {
+        let (dir, config) = test_config().await;
+        let task = Task::new(TaskSpec::new(
+            "backup-me",
+            serde_json::json!({"kind": "backup"}),
+        ));
+        task_store(&config).record(task).await.unwrap();
+        let output_path = dir.path().join("tasks-export.json");
+
+        run(
+            TaskArgs {
+                subcommand: TaskSubcommand::Export(TaskExportArgs {
+                    status: None,
+                    limit: None,
+                    format: "json".into(),
+                    output: Some(output_path.display().to_string()),
+                }),
+            },
+            &config,
+        )
+        .await
+        .unwrap();
+
+        let exported = std::fs::read_to_string(&output_path).unwrap();
+        let tasks: Vec<Task> = serde_json::from_str(&exported).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].spec.name, "backup-me");
+    }
+
     #[test]
     fn parse_retryable_status_filter_rejects_non_retryable_status() {
         let error = parse_retryable_status_filter(Some("completed")).unwrap_err();
         assert!(error
             .to_string()
             .contains("unsupported retry batch status 'completed'"));
+    }
+
+    #[test]
+    fn render_exported_tasks_rejects_unknown_formats() {
+        let error = render_exported_tasks(&[], "csv").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unsupported export format 'csv'"));
     }
 
     fn pending_task_with_capability(name: &str, capability: &str) -> Task {

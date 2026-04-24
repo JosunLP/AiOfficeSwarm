@@ -210,6 +210,7 @@ The CLI now exposes lightweight inspection commands for key enterprise concepts:
 - `swarm task submit --name triage --input '{"ticket":42}'` — persist a local task snapshot for operator workflows and integration testing.
 - `swarm task list` / `status <id>` / `cancel <id>` / `retry <id>` / `retry-batch --status failed --limit 10` — inspect or update the local persistent task queue snapshot.
 - `swarm task process --workers 2 --limit 10` — rehydrate pending persisted tasks into an in-process orchestrator and execute them with built-in local workers.
+- `swarm task export --format jsonl --status failed --output failed-tasks.jsonl` — export persisted task snapshots for audit, backup, and migration workflows.
 - `swarm learning inspect` — show the effective learning governance baseline.
 - `swarm learning list --scope global --category plan_template` — inspect recorded learning outputs, including reusable learned templates.
 - `swarm learning pending --scope global --category plan_template` — inspect the persistent learning approval queue with optional category filtering.
