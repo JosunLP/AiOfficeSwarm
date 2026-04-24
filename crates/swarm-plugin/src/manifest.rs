@@ -117,8 +117,9 @@ impl std::fmt::Display for WasmPermission {
 /// The static manifest that every plugin must provide.
 ///
 /// The host reads and registers this metadata before calling [`crate::Plugin::on_load`].
-/// Compatibility and permission enforcement are embedding-application managed
-/// today rather than automatically validated by [`crate::PluginHost`].
+/// Compatibility checks and host-configured permission guardrails can be
+/// validated by [`crate::PluginHost`], while richer embedding-application
+/// RBAC/policy decisions can still wrap host calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
     /// Stable, unique plugin identifier backed by a UUID.
@@ -140,8 +141,9 @@ pub struct PluginManifest {
     /// Framework permissions required by this plugin.
     ///
     /// Format: `"verb:resource"` (e.g., `"create:task"`). These declarations
-    /// describe the framework permissions a plugin expects; enforcement is
-    /// performed by the embedding application or a higher-level host wrapper.
+    /// describe the framework permissions a plugin expects; host load and
+    /// invocation policies may enforce them, and embedding applications may add
+    /// higher-level contextual policy on top.
     pub required_permissions: Vec<String>,
     /// OS-level sandbox permissions required by this WASM plugin.
     ///
