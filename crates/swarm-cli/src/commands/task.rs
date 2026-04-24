@@ -331,7 +331,7 @@ async fn process_pending_tasks(
     config: &SwarmConfig,
 ) -> anyhow::Result<TaskProcessSummary> {
     if args.workers == 0 {
-        anyhow::bail!("workers must be greater than zero");
+        anyhow::bail!("workers must be at least 1");
     }
 
     let store = task_store(config);
@@ -697,9 +697,7 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("workers must be greater than zero"));
+        assert!(error.to_string().contains("workers must be at least 1"));
     }
 
     #[test]

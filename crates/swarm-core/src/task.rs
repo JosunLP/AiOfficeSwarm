@@ -384,12 +384,15 @@ mod tests {
     #[test]
     fn failed_task_can_retry() {
         let mut task = make_task();
+        let agent = AgentId::new();
+        task.schedule(agent).unwrap();
+        task.start_running(agent).unwrap();
         task.fail("boom");
 
         task.retry().expect("retry should succeed");
 
         assert_eq!(task.status, TaskStatus::Pending);
-        assert_eq!(task.attempt_count, 0);
+        assert_eq!(task.attempt_count, 1);
     }
 
     #[test]
