@@ -208,7 +208,7 @@ The CLI now exposes lightweight inspection commands for key enterprise concepts:
 - `swarm role list` — enumerate loadable role definitions.
 - `swarm role validate` — validate role files and print diagnostics.
 - `swarm task submit --name triage --input '{"ticket":42}'` — persist a local task snapshot for operator workflows and integration testing.
-- `swarm task list` / `status <id>` / `cancel <id>` — inspect or update the local persistent task queue snapshot.
+- `swarm task list` / `status <id>` / `cancel <id>` / `retry <id>` — inspect or update the local persistent task queue snapshot.
 - `swarm task process --workers 2 --limit 10` — rehydrate pending persisted tasks into an in-process orchestrator and execute them with built-in local workers.
 - `swarm learning inspect` — show the effective learning governance baseline.
 - `swarm learning list --scope global --category plan_template` — inspect recorded learning outputs, including reusable learned templates.

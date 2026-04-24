@@ -30,6 +30,8 @@ pub enum TaskSubcommand {
     Submit(TaskSubmitArgs),
     /// Process pending persisted tasks with built-in local workers.
     Process(TaskProcessArgs),
+    /// Return a retryable persisted task to the pending state.
+    Retry(TaskRetryArgs),
     /// Show a single persisted task.
     Status(TaskStatusArgs),
     /// Cancel a pending persisted task.
@@ -85,6 +87,13 @@ pub struct TaskProcessArgs {
     /// Output format: text or json.
     #[arg(short, long, default_value = "text")]
     pub format: String,
+}
+
+/// Arguments for retrying a persisted task.
+#[derive(Args)]
+pub struct TaskRetryArgs {
+    /// Task ID.
+    pub id: String,
 }
 
 /// Arguments for showing a single task.
@@ -469,6 +478,11 @@ pub async fn run(args: TaskArgs, config: &SwarmConfig) -> anyhow::Result<()> {
                 _ => print_process_summary_text(&summary),
             }
         }
+        TaskSubcommand::Retry(args) => {
+            let id = parse_task_id(&args.id)?;
+            let task = task_store(config).retry(&id).await?;
+            println!("Retried task {} (status={})", task.id, task.status.label());
+        }
         TaskSubcommand::Status(args) => {
             let id = parse_task_id(&args.id)?;
             let task = task_store(config)
@@ -553,6 +567,49 @@ mod tests {
 
         let updated = task_store(&config).get(&id).await.unwrap().unwrap();
         assert!(matches!(updated.status, TaskStatus::Cancelled { .. }));
+    }
+
+    #[tokio::test]
+    async fn retry_requeues_failed_task_snapshot() {
+        let (_dir, config) = test_config().await;
+        let mut task = Task::new(TaskSpec::new("retry-me", serde_json::json!({})));
+        task.fail("transient");
+        let id = task.id;
+        task_store(&config).record(task).await.unwrap();
+
+        run(
+            TaskArgs {
+                subcommand: TaskSubcommand::Retry(TaskRetryArgs { id: id.to_string() }),
+            },
+            &config,
+        )
+        .await
+        .unwrap();
+
+        let updated = task_store(&config).get(&id).await.unwrap().unwrap();
+        assert_eq!(updated.status.label(), "pending");
+    }
+
+    #[tokio::test]
+    async fn retry_rejects_completed_task_snapshot() {
+        let (_dir, config) = test_config().await;
+        let mut task = Task::new(TaskSpec::new("done", serde_json::json!({})));
+        task.complete(serde_json::json!({"ok": true}));
+        let id = task.id;
+        task_store(&config).record(task).await.unwrap();
+
+        let error = run(
+            TaskArgs {
+                subcommand: TaskSubcommand::Retry(TaskRetryArgs { id: id.to_string() }),
+            },
+            &config,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("only failed, cancelled, or timed out tasks can be retried"));
     }
 
     fn pending_task_with_capability(name: &str, capability: &str) -> Task {
