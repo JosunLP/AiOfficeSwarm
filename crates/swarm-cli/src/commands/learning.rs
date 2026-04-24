@@ -1,7 +1,7 @@
 //! `swarm learning` sub-commands.
 
 use clap::{Args, Subcommand};
-use std::str::FromStr;
+use std::{fs, str::FromStr};
 
 use swarm_config::{model::LearningScopeKind, SwarmConfig};
 use swarm_learning::{
@@ -24,6 +24,8 @@ pub enum LearningSubcommand {
     Inspect,
     /// List recorded learning outputs for a scope.
     List(LearningListArgs),
+    /// Export recorded learning outputs for audit, backup, or migration flows.
+    Export(LearningExportArgs),
     /// List pending approval items from the persistent learning queue.
     Pending(LearningPendingArgs),
     /// Show a single learning output by ID.
@@ -60,6 +62,29 @@ pub struct LearningListArgs {
     /// Output format: text or json.
     #[arg(short, long, default_value = "text")]
     pub format: String,
+}
+
+/// Arguments for exporting learning outputs.
+#[derive(Args)]
+pub struct LearningExportArgs {
+    /// Scope to inspect (agent, team, tenant, workflow, global).
+    #[arg(long)]
+    pub scope: Option<String>,
+    /// Scope identifier for non-global scopes.
+    #[arg(long)]
+    pub scope_id: Option<String>,
+    /// Optional category filter (for example `plan_template`).
+    #[arg(long)]
+    pub category: Option<String>,
+    /// Optional status filter (pending, pending_approval, applied, rejected, rolled_back).
+    #[arg(long)]
+    pub status: Option<String>,
+    /// Export format: json or jsonl.
+    #[arg(short, long, default_value = "json")]
+    pub format: String,
+    /// Optional destination path. Defaults to stdout.
+    #[arg(long)]
+    pub output: Option<String>,
 }
 
 /// Arguments for listing pending learning outputs.
@@ -256,6 +281,31 @@ fn default_status_for_action(action: LearningLifecycleAction) -> LearningStatus 
     }
 }
 
+fn render_learning_outputs(outputs: &[LearningOutput], format: &str) -> anyhow::Result<String> {
+    match format.trim().to_ascii_lowercase().as_str() {
+        "json" => serde_json::to_string_pretty(outputs).map_err(Into::into),
+        "jsonl" => outputs
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|lines| lines.join("\n"))
+            .map_err(Into::into),
+        other => anyhow::bail!("unsupported export format '{other}' (expected json or jsonl)"),
+    }
+}
+
+async fn export_learning_outputs(
+    args: &LearningExportArgs,
+    config: &SwarmConfig,
+) -> anyhow::Result<String> {
+    let scope = resolve_scope(args.scope.as_deref(), args.scope_id.as_deref(), config)?;
+    let filter = learning_output_filter(args.category.as_deref(), args.status.as_deref())?;
+    let outputs = learning_store(config)
+        .list_filtered(&scope, &filter)
+        .await?;
+    render_learning_outputs(&outputs, &args.format)
+}
+
 async fn run_batch_action(
     args: LearningBatchActionArgs,
     config: &SwarmConfig,
@@ -327,6 +377,14 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
                         print_learning_output_summary(&output);
                     }
                 }
+            }
+        }
+        LearningSubcommand::Export(args) => {
+            let rendered = export_learning_outputs(&args, config).await?;
+            if let Some(path) = args.output.as_deref() {
+                fs::write(path, rendered)?;
+            } else {
+                println!("{rendered}");
             }
         }
         LearningSubcommand::Pending(args) => {
@@ -426,6 +484,14 @@ pub async fn run(args: LearningArgs, config: &SwarmConfig) -> anyhow::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
+
+    fn test_config() -> (tempfile::TempDir, SwarmConfig) {
+        let dir = tempdir().unwrap();
+        let mut config = SwarmConfig::default();
+        config.learning.store_path = dir.path().join("learning-store.json").display().to_string();
+        (dir, config)
+    }
 
     #[test]
     fn resolve_scope_uses_global_without_id() {
@@ -503,5 +569,91 @@ mod tests {
         );
 
         assert!(filter.matches(&output));
+    }
+
+    #[tokio::test]
+    async fn export_learning_outputs_filters_and_renders_jsonl() {
+        let (_dir, config) = test_config();
+        let store = learning_store(&config);
+
+        let auto = LearningOutput::auto(
+            LearningCategory::PreferenceAdaptation,
+            "Automatic preference",
+            serde_json::json!({"kind": "auto"}),
+        );
+        store.record(auto).await.unwrap();
+
+        let reviewed = LearningOutput::requires_review(
+            LearningCategory::PlanTemplate,
+            "Reusable template",
+            serde_json::json!({"template": "triage"}),
+            serde_json::json!({"source": "runtime"}),
+        );
+        store.record(reviewed.clone()).await.unwrap();
+
+        let exported = export_learning_outputs(
+            &LearningExportArgs {
+                scope: Some("global".into()),
+                scope_id: None,
+                category: Some("plan_template".into()),
+                status: Some("pending_approval".into()),
+                format: "jsonl".into(),
+                output: None,
+            },
+            &config,
+        )
+        .await
+        .unwrap();
+
+        let lines = exported.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1);
+        let output: LearningOutput = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(output.id, reviewed.id);
+        assert_eq!(output.category, LearningCategory::PlanTemplate);
+        assert_eq!(output.status, LearningStatus::PendingApproval);
+    }
+
+    #[tokio::test]
+    async fn export_learning_outputs_writes_json_file() {
+        let (dir, config) = test_config();
+        let store = learning_store(&config);
+        store
+            .record(LearningOutput::auto(
+                LearningCategory::KnowledgeAccumulation,
+                "Captured note",
+                serde_json::json!({"note": "keep"}),
+            ))
+            .await
+            .unwrap();
+
+        let output_path = dir.path().join("learning-export.json");
+        run(
+            LearningArgs {
+                subcommand: LearningSubcommand::Export(LearningExportArgs {
+                    scope: Some("global".into()),
+                    scope_id: None,
+                    category: None,
+                    status: None,
+                    format: "json".into(),
+                    output: Some(output_path.display().to_string()),
+                }),
+            },
+            &config,
+        )
+        .await
+        .unwrap();
+
+        let exported = std::fs::read_to_string(output_path).unwrap();
+        let outputs: Vec<LearningOutput> = serde_json::from_str(&exported).unwrap();
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].description, "Captured note");
+    }
+
+    #[test]
+    fn render_learning_outputs_rejects_unknown_format() {
+        let error = render_learning_outputs(&[], "csv").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unsupported export format 'csv'"));
     }
 }

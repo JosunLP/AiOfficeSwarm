@@ -213,6 +213,7 @@ The CLI now exposes lightweight inspection commands for key enterprise concepts:
 - `swarm task export --format jsonl --status failed --output failed-tasks.jsonl` — export persisted task snapshots for audit, backup, and migration workflows.
 - `swarm learning inspect` — show the effective learning governance baseline.
 - `swarm learning list --scope global --category plan_template` — inspect recorded learning outputs, including reusable learned templates.
+- `swarm learning export --scope global --status pending_approval --format jsonl --output learning-queue.jsonl` — export persisted learning outputs for audit, backup, and migration workflows.
 - `swarm learning pending --scope global --category plan_template` — inspect the persistent learning approval queue with optional category filtering.
 - `swarm learning approve <id>` / `reject <id>` / `rollback <id>` — manage individual learning lifecycle decisions.
 - `swarm learning approve-batch --scope global --category plan_template` — apply lifecycle updates to filtered groups of learning outputs.
