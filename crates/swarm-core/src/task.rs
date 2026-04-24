@@ -186,6 +186,14 @@ impl TaskStatus {
             TaskStatus::TimedOut { .. } => "timed_out",
         }
     }
+
+    /// Returns `true` if the task may be requeued for another attempt.
+    pub fn can_retry(&self) -> bool {
+        matches!(
+            self,
+            TaskStatus::Failed { .. } | TaskStatus::Cancelled { .. } | TaskStatus::TimedOut { .. }
+        )
+    }
 }
 
 /// A fully instantiated task including its spec, status, and audit timestamps.
@@ -283,6 +291,19 @@ impl Task {
         self.status = TaskStatus::TimedOut { timed_out_at: now };
         self.updated_at = now;
     }
+
+    /// Return a retryable terminal task to the `Pending` state.
+    ///
+    /// # Errors
+    /// Returns the current status if the task is not eligible for retry.
+    pub fn retry(&mut self) -> Result<(), &TaskStatus> {
+        if !self.status.can_retry() {
+            return Err(&self.status);
+        }
+        self.status = TaskStatus::Pending;
+        self.updated_at = Utc::now();
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -358,6 +379,29 @@ mod tests {
         task.time_out();
         assert!(task.status.is_terminal());
         assert_eq!(task.status.label(), "timed_out");
+    }
+
+    #[test]
+    fn failed_task_can_retry() {
+        let mut task = make_task();
+        let agent = AgentId::new();
+        task.schedule(agent).unwrap();
+        task.start_running(agent).unwrap();
+        task.fail("boom");
+
+        task.retry().expect("retry should succeed");
+
+        assert_eq!(task.status, TaskStatus::Pending);
+        assert_eq!(task.attempt_count, 1);
+    }
+
+    #[test]
+    fn completed_task_cannot_retry() {
+        let mut task = make_task();
+        task.complete(serde_json::json!({"ok": true}));
+
+        assert!(task.retry().is_err());
+        assert_eq!(task.status.label(), "completed");
     }
 
     #[test]

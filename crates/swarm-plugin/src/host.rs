@@ -13,7 +13,7 @@ use swarm_core::{
     identity::PluginId,
 };
 
-use crate::{lifecycle::PluginState, registry::PluginRegistry, Plugin};
+use crate::{lifecycle::PluginState, manifest::PluginManifest, registry::PluginRegistry, Plugin};
 
 /// Host-side permission policy applied during plugin loading.
 ///
@@ -65,6 +65,49 @@ impl PluginPermissionPolicy {
     }
 }
 
+/// Host-side invocation policy applied during plugin action execution.
+///
+/// By default the host remains permissive for backward compatibility. When a
+/// grant list is configured, plugin invocation fails unless every declared
+/// framework permission required by the plugin has been granted by the host.
+#[derive(Debug, Clone, Default)]
+pub struct PluginInvocationPolicy {
+    granted_framework_permissions: Option<HashSet<String>>,
+}
+
+impl PluginInvocationPolicy {
+    /// Create a permissive invocation policy that does not restrict runtime
+    /// plugin permissions.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Grant the provided framework permissions for plugin invocation.
+    pub fn with_granted_framework_permissions<I, S>(mut self, permissions: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.granted_framework_permissions =
+            Some(permissions.into_iter().map(Into::into).collect());
+        self
+    }
+
+    fn allows_framework_permission(&self, permission: &str) -> bool {
+        self.granted_framework_permissions
+            .as_ref()
+            .map_or(true, |granted| granted.contains(permission))
+    }
+
+    fn missing_framework_permission<'a>(&self, manifest: &'a PluginManifest) -> Option<&'a str> {
+        manifest
+            .required_permissions
+            .iter()
+            .find(|permission| !self.allows_framework_permission(permission))
+            .map(String::as_str)
+    }
+}
+
 /// Runtime container for loaded plugins.
 ///
 /// The host is responsible for:
@@ -79,6 +122,7 @@ pub struct PluginHost {
     /// The live plugin instances (boxed trait objects).
     instances: DashMap<PluginId, Arc<Mutex<Box<dyn Plugin>>>>,
     permission_policy: PluginPermissionPolicy,
+    invocation_policy: PluginInvocationPolicy,
 }
 
 impl Default for PluginHost {
@@ -87,6 +131,7 @@ impl Default for PluginHost {
             registry: PluginRegistry::default(),
             instances: DashMap::new(),
             permission_policy: PluginPermissionPolicy::default(),
+            invocation_policy: PluginInvocationPolicy::default(),
         }
     }
 }
@@ -120,6 +165,27 @@ impl PluginHost {
         }
     }
 
+    /// Create a plugin host with an explicit invocation policy.
+    pub fn with_invocation_policy(invocation_policy: PluginInvocationPolicy) -> Self {
+        Self {
+            invocation_policy,
+            ..Self::default()
+        }
+    }
+
+    /// Create a plugin host with explicit load-time and invocation-time
+    /// policies.
+    pub fn with_policies(
+        permission_policy: PluginPermissionPolicy,
+        invocation_policy: PluginInvocationPolicy,
+    ) -> Self {
+        Self {
+            permission_policy,
+            invocation_policy,
+            ..Self::default()
+        }
+    }
+
     fn validate_manifest_permissions(
         &self,
         manifest: &crate::manifest::PluginManifest,
@@ -145,6 +211,41 @@ impl PluginHost {
                     resource: "plugin_host.load".into(),
                 });
             }
+        }
+
+        Ok(())
+    }
+
+    fn resolve_declared_action<'a>(
+        &self,
+        manifest: &'a PluginManifest,
+        action: &str,
+    ) -> SwarmResult<&'a str> {
+        manifest
+            .actions
+            .iter()
+            .find(|candidate| candidate.name.eq_ignore_ascii_case(action))
+            .map(|candidate| candidate.name.as_str())
+            .ok_or_else(|| SwarmError::PluginOperationFailed {
+                name: manifest.name.clone(),
+                reason: format!("action '{action}' is not declared by the plugin manifest"),
+            })
+    }
+
+    fn validate_invocation_permissions(
+        &self,
+        manifest: &PluginManifest,
+        action: &str,
+    ) -> SwarmResult<()> {
+        if let Some(permission) = self
+            .invocation_policy
+            .missing_framework_permission(manifest)
+        {
+            return Err(SwarmError::PermissionDenied {
+                subject: manifest.name.clone(),
+                permission: permission.to_string(),
+                resource: format!("plugin.invoke:{action}"),
+            });
         }
 
         Ok(())
@@ -193,14 +294,16 @@ impl PluginHost {
         action: &str,
         params: serde_json::Value,
     ) -> SwarmResult<serde_json::Value> {
-        let state = self
-            .registry
-            .get(plugin_id)
-            .ok_or_else(|| SwarmError::PluginOperationFailed {
-                name: plugin_id.to_string(),
-                reason: "plugin not loaded".into(),
-            })?
-            .state;
+        let record =
+            self.registry
+                .get(plugin_id)
+                .ok_or_else(|| SwarmError::PluginOperationFailed {
+                    name: plugin_id.to_string(),
+                    reason: "plugin not loaded".into(),
+                })?;
+        let declared_action = self.resolve_declared_action(&record.manifest, action)?;
+        self.validate_invocation_permissions(&record.manifest, declared_action)?;
+        let state = record.state;
 
         if !state.is_active() {
             return Err(SwarmError::PluginOperationFailed {
@@ -236,13 +339,12 @@ impl PluginHost {
         }
 
         let name = plugin.manifest().name.clone();
-        plugin
-            .invoke(action, params)
-            .await
-            .map_err(|e| SwarmError::PluginOperationFailed {
+        plugin.invoke(declared_action, params).await.map_err(|e| {
+            SwarmError::PluginOperationFailed {
                 name,
                 reason: e.to_string(),
-            })
+            }
+        })
     }
 
     /// Unload a plugin gracefully.
@@ -666,5 +768,72 @@ mod tests {
             host.registry().get(&plugin_id).unwrap().state.label(),
             "active"
         );
+    }
+
+    #[tokio::test]
+    async fn invoke_rejects_actions_missing_from_manifest() {
+        let host = PluginHost::new();
+        let plugin_id = host.load(Box::new(EchoPlugin::new())).await.unwrap();
+
+        let error = host
+            .invoke(
+                &plugin_id,
+                "missing-action",
+                serde_json::json!({"msg": "hello"}),
+            )
+            .await
+            .expect_err("undeclared actions should be rejected");
+
+        assert!(matches!(
+            error,
+            SwarmError::PluginOperationFailed { reason, .. }
+                if reason == "action 'missing-action' is not declared by the plugin manifest"
+        ));
+    }
+
+    #[tokio::test]
+    async fn invoke_rejects_runtime_permissions_outside_grant_list() {
+        let host = PluginHost::with_invocation_policy(
+            PluginInvocationPolicy::new().with_granted_framework_permissions(["read:config"]),
+        );
+        let plugin_id = host
+            .load(Box::new(EchoPlugin::with_permissions(
+                &["create:task"],
+                &[],
+            )))
+            .await
+            .unwrap();
+
+        let error = host
+            .invoke(&plugin_id, "echo", serde_json::json!({"msg": "hello"}))
+            .await
+            .expect_err("missing invocation grants should be denied");
+
+        assert!(matches!(
+            error,
+            SwarmError::PermissionDenied { permission, resource, .. }
+                if permission == "create:task" && resource == "plugin.invoke:echo"
+        ));
+    }
+
+    #[tokio::test]
+    async fn invoke_accepts_runtime_permissions_inside_grant_list() {
+        let host = PluginHost::with_invocation_policy(
+            PluginInvocationPolicy::new().with_granted_framework_permissions(["read:config"]),
+        );
+        let plugin_id = host
+            .load(Box::new(EchoPlugin::with_permissions(
+                &["read:config"],
+                &[],
+            )))
+            .await
+            .unwrap();
+
+        let result = host
+            .invoke(&plugin_id, "ECHO", serde_json::json!({"msg": "hello"}))
+            .await
+            .unwrap();
+
+        assert_eq!(result, serde_json::json!({"msg": "hello"}));
     }
 }

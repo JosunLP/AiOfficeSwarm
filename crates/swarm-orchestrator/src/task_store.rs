@@ -26,6 +26,9 @@ pub trait TaskStore: Send + Sync {
 
     /// Cancel a pending task snapshot.
     async fn cancel(&self, id: &TaskId, reason: Option<String>) -> SwarmResult<Task>;
+
+    /// Return a retryable terminal task snapshot to the pending state.
+    async fn retry(&self, id: &TaskId) -> SwarmResult<Task>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -202,6 +205,27 @@ impl TaskStore for FileTaskStore {
         self.save_document(&document)?;
         Ok(snapshot)
     }
+
+    async fn retry(&self, id: &TaskId) -> SwarmResult<Task> {
+        let _guard = self.lock.lock().await;
+        let mut document = self.load_document()?;
+        let task = document
+            .tasks
+            .iter_mut()
+            .find(|task| task.id == *id)
+            .ok_or(SwarmError::TaskNotFound { id: *id })?;
+
+        task.retry().map_err(|status| SwarmError::InvalidTaskSpec {
+            reason: format!(
+                "only failed, cancelled, or timed out tasks can be retried from the task store; got {}",
+                status.label()
+            ),
+        })?;
+
+        let snapshot = task.clone();
+        self.save_document(&document)?;
+        Ok(snapshot)
+    }
 }
 
 fn temporary_store_path(path: &Path) -> PathBuf {
@@ -276,6 +300,20 @@ impl TaskStore for InMemoryTaskStore {
         entry.updated_at = cancelled_at;
         Ok(entry.clone())
     }
+
+    async fn retry(&self, id: &TaskId) -> SwarmResult<Task> {
+        let mut entry = self
+            .tasks
+            .get_mut(id)
+            .ok_or(SwarmError::TaskNotFound { id: *id })?;
+        entry.retry().map_err(|status| SwarmError::InvalidTaskSpec {
+            reason: format!(
+                "only failed, cancelled, or timed out tasks can be retried from the task store; got {}",
+                status.label()
+            ),
+        })?;
+        Ok(entry.clone())
+    }
 }
 
 #[cfg(test)]
@@ -333,6 +371,36 @@ mod tests {
         store.record(task).await.unwrap();
 
         let error = store.cancel(&id, None).await.unwrap_err();
+        assert!(matches!(error, SwarmError::InvalidTaskSpec { .. }));
+    }
+
+    #[tokio::test]
+    async fn retry_requeues_failed_task() {
+        let store = InMemoryTaskStore::new();
+        let mut task = task_with_known_id("00000000-0000-0000-0000-000000000003");
+        task.fail("transient");
+        let id = task.id;
+        store.record(task).await.unwrap();
+
+        let retried = store.retry(&id).await.unwrap();
+
+        assert_eq!(retried.status.label(), "pending");
+        assert_eq!(
+            store.get(&id).await.unwrap().unwrap().status.label(),
+            "pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_rejects_completed_tasks() {
+        let store = InMemoryTaskStore::new();
+        let mut task = task_with_known_id("00000000-0000-0000-0000-000000000004");
+        task.complete(serde_json::json!({"ok": true}));
+        let id = task.id;
+        store.record(task).await.unwrap();
+
+        let error = store.retry(&id).await.unwrap_err();
+
         assert!(matches!(error, SwarmError::InvalidTaskSpec { .. }));
     }
 }

@@ -766,12 +766,22 @@ mod tests {
     }
 
     fn test_manifest() -> PluginManifest {
-        PluginManifest::new(
+        let mut manifest = PluginManifest::new(
             "test-wasm",
             "0.1.0",
             "tests",
             "WASM integration test plugin",
-        )
+        );
+        manifest
+            .capabilities
+            .push(crate::manifest::PluginCapabilityKind::ActionProvider);
+        manifest.actions.push(crate::manifest::PluginAction {
+            name: "echo".into(),
+            description: "Echo the provided payload".into(),
+            input_schema: None,
+            output_schema: None,
+        });
+        manifest
     }
 
     // ── Loader ──────────────────────────────────────────────────────────────
